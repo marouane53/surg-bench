@@ -45,29 +45,23 @@ def _split_a_blocks(text: str) -> List[Tuple[str, str]]:
     return parts
 
 
-def _collect_q_anchors(doc: fitz.Document) -> Dict[str, Tuple[int, float]]:
-    """Find the top Y position for each question anchor 'Qx.y' using text blocks.
-
-    Returns:
-        dict: {qid: (page_index, y0)}  (y0 in PDF points from top)
+def _q_positions(page: fitz.Page) -> Dict[str, float]:
+    """Return approximate top-Y of each question header ("Qx.y") on the page.
+    We rely on PyMuPDF's block extraction (which is reliable and fast) rather
+    than OCR or color heuristics.
     """
-    anchors: Dict[str, Tuple[int, float]] = {}
-    for i in range(doc.page_count):
-        page = doc.load_page(i)
-        # get_text("blocks") returns [x0,y0,x1,y1,"text", block_no, ...]
-        for blk in page.get_text("blocks"):
-            try:
-                x0, y0, x1, y1, text, *_ = blk
-            except Exception:
-                continue
-            if not isinstance(text, str):
-                continue
-            for m in Q_RE.finditer(text):
-                qid = f"Q{m.group(1)}.{m.group(2)}"
-                # If appears multiple times, keep the earliest (topmost y)
-                if qid not in anchors or y0 < anchors[qid][1]:
-                    anchors[qid] = (i, y0)
-    return anchors
+    positions: Dict[str, float] = {}
+    for span in page.get_text("blocks"):
+        try:
+            x0, y0, x1, y1, text, *_ = span
+        except Exception:
+            continue
+        if not isinstance(text, str):
+            continue
+        for m in Q_RE.finditer(text):
+            qid = f"Q{m.group(1)}.{m.group(2)}"
+            positions[qid] = y0
+    return positions
 
 
 # -----------------------------
@@ -86,55 +80,83 @@ def _to_png(raw: bytes) -> bytes:
         return raw
 
 
-def _collect_images_all_pages(
-    doc: fitz.Document,
-    min_area_ratio: float = 0.004,   # ~0.4% of page area
-    min_bytes: int = 1500
-) -> List[Dict[str, object]]:
-    """Collect images for the entire document with bounding boxes.
-
-    We combine:
-      - rawdict image blocks (fast path, has bbox)
-      - XREF listing via page.get_images(full=True) + page.get_image_rects(xref)
-
+def _image_candidates_with_bbox(page: fitz.Page) -> List[Tuple[Tuple[float, float, float, float], bytes]]:
+    """Extract images with their bounding boxes from a page.
+    
     Returns:
-        A list of dicts: {"page": int, "bbox": (x0,y0,x1,y1), "bytes": bytes}
+        List of (bbox, raw_bytes) tuples where bbox is (x0, y0, x1, y1)
     """
-    images: List[Dict[str, object]] = []
+    images = []
+    pw, ph = page.rect.width, page.rect.height
+    page_area = max(pw * ph, 1.0)
+    seen_keys = set()
+    min_area_ratio = 0.004  # 0.4% of page area
+    min_bytes = 1500
 
-    for i in range(doc.page_count):
-        page = doc.load_page(i)
-        pw, ph = page.rect.width, page.rect.height
-        page_area = max(pw * ph, 1.0)
-        seen_keys = set()
+    # 1) From rawdict blocks (often already includes bbox + bytes or xref)
+    rd = page.get_text("rawdict")
+    for b in rd.get("blocks", []):
+        if b.get("type") != 1:
+            continue
+        bbox = tuple(b["bbox"])
+        img_bytes: Optional[bytes] = None
 
-        # 1) From rawdict blocks (often already includes bbox + bytes or xref)
-        rd = page.get_text("rawdict")
-        for b in rd.get("blocks", []):
-            if b.get("type") != 1:
-                continue
-            bbox = tuple(b["bbox"])
-            img_bytes: Optional[bytes] = None
-
-            img_field = b.get("image")
-            if isinstance(img_field, (bytes, bytearray)):
-                img_bytes = bytes(img_field)
-            else:
-                # Sometimes 'image' is an xref integer
+        img_field = b.get("image")
+        if isinstance(img_field, (bytes, bytearray)):
+            img_bytes = bytes(img_field)
+        else:
+            # Sometimes 'image' is an xref integer
+            try:
+                xref = int(img_field) if img_field is not None else None
+            except Exception:
+                xref = None
+            if xref:
                 try:
-                    xref = int(img_field) if img_field is not None else None
+                    base_image = page.parent.extract_image(xref)
+                    img_bytes = base_image.get("image")
                 except Exception:
-                    xref = None
-                if xref:
-                    try:
-                        base_image = page.parent.extract_image(xref)
-                        img_bytes = base_image.get("image")
-                    except Exception:
-                        img_bytes = None
+                    img_bytes = None
 
-            if not img_bytes or len(img_bytes) < min_bytes:
-                continue
+        if not img_bytes or len(img_bytes) < min_bytes:
+            continue
 
+        w = max(0.0, bbox[2] - bbox[0])
+        h = max(0.0, bbox[3] - bbox[1])
+        if (w * h) / page_area < min_area_ratio:
+            continue
+
+        key = (round(bbox[0], 1), round(bbox[1], 1), round(bbox[2], 1), round(bbox[3], 1), len(img_bytes))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        images.append((bbox, img_bytes))
+
+    # 2) From XREF listing + rects (captures images inside XObjects)
+    try:
+        xrefs = page.get_images(full=True)
+    except Exception:
+        xrefs = []
+
+    for entry in xrefs:
+        # entry[0] is xref according to PyMuPDF docs
+        xref = entry[0]
+        try:
+            base = page.parent.extract_image(xref)
+            img_bytes = base.get("image")
+        except Exception:
+            img_bytes = None
+        if not img_bytes or len(img_bytes) < min_bytes:
+            continue
+
+        rects = []
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:
+            rects = []
+
+        for r in rects or []:
+            bbox = (r.x0, r.y0, r.x1, r.y1)
             w = max(0.0, bbox[2] - bbox[0])
             h = max(0.0, bbox[3] - bbox[1])
             if (w * h) / page_area < min_area_ratio:
@@ -145,128 +167,69 @@ def _collect_images_all_pages(
                 continue
             seen_keys.add(key)
 
-            images.append({"page": i, "bbox": bbox, "bytes": img_bytes})
+            images.append((bbox, img_bytes))
 
-        # 2) From XREF listing + rects (captures images inside XObjects)
-        try:
-            xrefs = page.get_images(full=True)
-        except Exception:
-            xrefs = []
-
-        for entry in xrefs:
-            # entry[0] is xref according to PyMuPDF docs
-            xref = entry[0]
-            try:
-                base = page.parent.extract_image(xref)
-                img_bytes = base.get("image")
-            except Exception:
-                img_bytes = None
-            if not img_bytes or len(img_bytes) < min_bytes:
-                continue
-
-            rects = []
-            try:
-                rects = page.get_image_rects(xref)
-            except Exception:
-                rects = []
-
-            for r in rects or []:
-                bbox = (r.x0, r.y0, r.x1, r.y1)
-                w = max(0.0, bbox[2] - bbox[0])
-                h = max(0.0, bbox[3] - bbox[1])
-                if (w * h) / page_area < min_area_ratio:
-                    continue
-
-                key = (round(bbox[0], 1), round(bbox[1], 1), round(bbox[2], 1), round(bbox[3], 1), len(img_bytes))
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-
-                images.append({"page": i, "bbox": bbox, "bytes": img_bytes})
-
-    info(f"Collected {len(images)} images across {doc.page_count} pages")
     return images
 
 
-# -----------------------------
-# Assignment helpers
-# -----------------------------
-def _abspos(page_index: int, y: float, page_height: float) -> float:
-    """Return a scalar position combining page index and vertical offset."""
-    if page_height <= 0:
-        page_height = 1.0
-    return page_index + (y / page_height)
-
-
-def _build_q_position_bands(
-    doc: fitz.Document,
-    q_map: Dict[str, Tuple[int, str]],
-    anchors: Dict[str, Tuple[int, float]],
-) -> List[Tuple[str, float, float]]:
-    """Create vertical Voronoi-like bands along the document for each question.
-
-    Returns a list of (qid, band_start, band_end) using absolute position units.
+def _assign_images_to_qids(page: fitz.Page, q_positions: Dict[str, float], size_thresh: int = 4000) -> Dict[str, List[bytes]]:
     """
-    # Build a list of (qid, pos) for all questions
-    q_pos_list: List[Tuple[str, float]] = []
-    for qid, (page_idx, _qtext) in q_map.items():
-        # if anchor not found on page, fall back to small y (close to top)
-        if qid in anchors:
-            p, y = anchors[qid]
-        else:
-            p, y = page_idx, 0.0
-        ph = doc.load_page(p).rect.height
-        q_pos_list.append((qid, _abspos(p, y, ph)))
+    Assign images to the question whose header appears ABOVE them (band-wise),
+    instead of the previous 'nearest' heuristic.
 
-    q_pos_list.sort(key=lambda t: t[1])
-    if not q_pos_list:
-        return []
+    Why this matters:
+    - In two-column surgical books, a figure under Q1.1 can sit physically close to the
+      Q1.2 header. Nearest-distance would wrongly attach it to Q1.2.
+    - Band-wise assignment ensures everything between Qn and Q(n+1) belongs to Qn,
+      matching how you (and examiners) read the page.
 
-    # Compute midpoints between consecutive questions as band boundaries
+    Args:
+        page: current PyMuPDF page
+        q_positions: mapping of 'Qx.y' -> Y coordinate (top of the header block)
+        size_thresh: minimum image byte-size to keep (filters tiny artifacts)
+
+    Returns:
+        Dict[str, List[bytes]] mapping question-id -> list of raw image bytes on that page
+    """
+    imgs = _image_candidates_with_bbox(page)
+    assignments: Dict[str, List[bytes]] = {k: [] for k in q_positions}
+    if not imgs or not q_positions:
+        return assignments
+
+    # Pre-filter very small images (decorations / icons)
+    filtered = []
+    for bbox, raw in imgs:
+        if len(raw) < size_thresh:
+            continue
+        filtered.append((bbox, raw))
+    imgs = filtered
+
+    # Build vertical bands: [ y(Qi) .. y(Qi+1) ), last band ends at bottom of page
+    ordered = sorted(q_positions.items(), key=lambda kv: kv[1])  # [(qid, y), ...] ascending by y
     bands: List[Tuple[str, float, float]] = []
-    for i, (qid, pos) in enumerate(q_pos_list):
-        prev_pos = q_pos_list[i - 1][1] if i > 0 else pos - 1.0
-        next_pos = q_pos_list[i + 1][1] if i + 1 < len(q_pos_list) else pos + 1.0
-        start = (prev_pos + pos) / 2.0 if i > 0 else prev_pos
-        end = (pos + next_pos) / 2.0 if i + 1 < len(q_pos_list) else next_pos
-        bands.append((qid, start, end))
-    return bands
+    page_bottom = float(page.rect.br.y)
+    for i, (qid, y) in enumerate(ordered):
+        y0 = float(y) - 4.0  # small upward margin
+        y1 = float(ordered[i+1][1]) - 4.0 if i+1 < len(ordered) else page_bottom + 1.0
+        bands.append((qid, y0, y1))
 
-
-def _assign_images_to_questions(
-    doc: fitz.Document,
-    images: List[Dict[str, object]],
-    bands: List[Tuple[str, float, float]],
-) -> Dict[str, List[Dict[str, object]]]:
-    """Assign each image to the question whose band contains the image absolute position."""
-    out: Dict[str, List[Dict[str, object]]] = {qid: [] for qid, *_ in bands}
-    # Build quick lookup: page height cache
-    page_h: Dict[int, float] = {}
-    for i in range(doc.page_count):
-        page_h[i] = doc.load_page(i).rect.height
-
-    for img in images:
-        page_idx = int(img["page"])
-        bbox = img["bbox"]  # (x0,y0,x1,y1)
+    # Assign each image to the band containing its vertical midpoint
+    for bbox, raw in imgs:
         ymid = (bbox[1] + bbox[3]) / 2.0
-        pos = _abspos(page_idx, ymid, page_h.get(page_idx, 1.0))
-
-        # find matching band
-        chosen_qid: Optional[str] = None
-        for qid, start, end in bands:
-            if pos >= start and pos < end:
-                chosen_qid = qid
+        attached = False
+        for qid, y0, y1 in bands:
+            if ymid >= y0 and ymid < y1:
+                assignments[qid].append(raw)
+                attached = True
                 break
-        if chosen_qid is None:
-            # if no band matched (shouldn't happen), attach to nearest by distance
-            nearest = min(bands, key=lambda b: abs(pos - (b[1] + b[2]) / 2.0))
-            chosen_qid = nearest[0]
-        out[chosen_qid].append(img)
+        if not attached:
+            # If an image somehow lands above the first header (rare), attach to the first Q on page
+            assignments[ordered[0][0]].append(raw)
 
-    # Sort images within each question band by vertical position to keep order
-    for qid, lst in out.items():
-        lst.sort(key=lambda im: _abspos(int(im["page"]), ((im["bbox"][1] + im["bbox"][3]) / 2.0), page_h[int(im["page"])]))
-    return out
+    return assignments
+
+
+# Remove the old document-wide assignment function as we're switching to page-by-page
 
 
 # -----------------------------
@@ -303,18 +266,39 @@ def extract(pdf_path: str, out_dir: str = "data/out", images_dir: str = "data/ou
         warn("No questions detected – regex may not match this PDF.")
         return []
 
-    # Pass 2: discover question anchors (page + y)
-    anchors = _collect_q_anchors(doc)
-    info(f"Found anchors for {len(anchors)} / {len(q_map)} questions")
+    # Pass 2: assign images page by page using ownership bands
+    assignment: Dict[str, List[bytes]] = {}
+    total_images = 0
+    
+    for i in range(doc.page_count):
+        page = doc.load_page(i)
+        
+        # NEW: Skip pages that do not visibly contain any "Qx.y" anchors
+        # (e.g., cover pages, chapter dividers). This prevents extracting
+        # decorative/background images from non-question pages.
+        qpos = _q_positions(page)
+        if not qpos:
+            continue
+        
+        # Restrict to questions that actually start on this page AND that we detected
+        # positions for on this page (guards against stray or mis-read tokens).
+        qids_here = [qid for qid, (pi, _) in q_map.items() if pi == i and qid in qpos]
+        if not qids_here:
+            continue
+            
+        assign = _assign_images_to_qids(page, qpos)
+        for qid, imgs in assign.items():
+            # Only attach/save for QIDs that truly start on this page
+            if qid not in qids_here:
+                continue
+            if qid not in assignment:
+                assignment[qid] = []
+            assignment[qid].extend(imgs)
+            total_images += len(imgs)
+    
+    info(f"Collected {total_images} images across {doc.page_count} pages")
 
-    # Pass 3: collect all images across the document
-    all_images = _collect_images_all_pages(doc)
-
-    # Pass 4: build Voronoi-like bands and assign images
-    bands = _build_q_position_bands(doc, q_map, anchors)
-    assignment = _assign_images_to_questions(doc, all_images, bands)
-
-    # Pass 5: save images and assemble QA items
+    # Pass 3: save images and assemble QA items
     items: List[QAItem] = []
     saved_counts: Dict[str, int] = {}
 
@@ -325,8 +309,7 @@ def extract(pdf_path: str, out_dir: str = "data/out", images_dir: str = "data/ou
 
         # Persist images for this question (if any)
         img_paths: List[str] = []
-        for idx, img in enumerate(assignment.get(qid, []), start=1):
-            raw = img["bytes"]
+        for idx, raw in enumerate(assignment.get(qid, []), start=1):
             # Convert to PNG for consistent downstream handling
             png_bytes = _to_png(raw)
             h = md5_bytes(png_bytes)[:10]
