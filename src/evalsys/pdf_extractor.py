@@ -44,18 +44,32 @@ def _split_a_blocks(text: str) -> List[Tuple[str, str]]:
         parts.append((aid, atext))
     return parts
 
-def _image_candidates_with_bbox(page: fitz.Page) -> List[Tuple[Tuple[float,float,float,float], bytes]]:
+def _image_candidates_with_bbox(page: fitz.Page) -> List[Tuple[Tuple[float, float, float, float], bytes]]:
     blocks = _extract_blocks(page)
-    images: List[Tuple[Tuple[float,float,float,float], bytes]] = []
+    images: List[Tuple[Tuple[float, float, float, float], bytes]] = []
     for b in blocks:
-        if b.get("type") == 1:  # image
+        if b.get("type") == 1:  # image block
             bbox = tuple(b["bbox"])
-            xref = b["image"]
-            pix = fitz.Pixmap(page.parent, xref)
-            if pix.n >= 5:  # CMYK
-                pix = fitz.Pixmap(fitz.csRGB, pix)
-            img_bytes = pix.tobytes("png")
-            images.append((bbox, img_bytes))
+            img_field = b.get("image")
+            # PyMuPDF rawdict puts raw bytes under 'image'. In some versions it may be an xref.
+            if isinstance(img_field, (bytes, bytearray)):
+                img_bytes = bytes(img_field)
+                if len(img_bytes) > 1000:  # filter very small artifacts
+                    images.append((bbox, img_bytes))
+            else:
+                # Fallback: try to treat it as an xref and extract from the document
+                try:
+                    xref = int(img_field) if img_field is not None else None
+                except Exception:
+                    xref = None
+                if xref:
+                    try:
+                        base_image = page.parent.extract_image(xref)
+                        img_bytes = base_image.get("image")
+                        if img_bytes and len(img_bytes) > 1000:
+                            images.append((bbox, img_bytes))
+                    except Exception:
+                        continue
     return images
 
 def _nearest_images_to_qids(page: fitz.Page, q_positions: Dict[str, float], size_thresh: int = 10000) -> Dict[str, List[bytes]]:
@@ -137,9 +151,25 @@ def extract(pdf_path: str, out_dir: str = "data/out", images_dir: str = "data/ou
         assign = _nearest_images_to_qids(page, qpos)
         for qid, raws in assign.items():
             for idx, raw in enumerate(raws, start=1):
-                h = md5_bytes(raw)[:10]
+                # Convert to PNG to match saved extension and downstream MIME
+                png_bytes: Optional[bytes] = None
+                try:
+                    with Image.open(io.BytesIO(raw)) as im:
+                        # Ensure RGB for consistent PNG saving
+                        if im.mode in ("RGBA", "RGB", "L"):
+                            conv = im
+                        else:
+                            conv = im.convert("RGB")
+                        buf = io.BytesIO()
+                        conv.save(buf, format="PNG")
+                        png_bytes = buf.getvalue()
+                except Exception:
+                    png_bytes = None
+
+                data_to_save = png_bytes or raw
+                h = md5_bytes(data_to_save)[:10]
                 rel_path = f"{qid.replace('.', '_')}_{idx}_{h}.png"
-                save_bytes(Path(images_dir) / rel_path, raw)
+                save_bytes(Path(images_dir) / rel_path, data_to_save)
                 img_map[qid].append(str(Path("out/images") / rel_path))
 
     # build items
