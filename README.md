@@ -77,6 +77,31 @@ python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 This creates `data/out/graded/scores.csv` and `data/out/graded/report.html`
 
+## Quick Testing Example
+
+To quickly test multiple models and generate a comparative report with just 5 questions:
+
+```bash
+# Step 1: Extract Q&A from PDF (if not done already)
+python -m src.evalsys.cli ingest --pdf data/surgical.pdf
+
+# Step 2: Run multiple models at once (Gemini 2.5 Flash, Pro, and GPT-5)
+python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash,gemini:gemini-2.5-pro,openai-reasoning:gpt-5" --limit 5
+
+# Step 3: Grade all responses using Gemini 2.5 Flash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+
+# View results
+# - CSV: data/out/graded/scores.csv  
+# - HTML: data/out/graded/report.html
+```
+
+This will:
+1. Run 3 different models on the first 5 questions
+2. Generate comparative responses in `data/out/runs/`
+3. Grade all responses using Gemini 2.5 Flash as the evaluator
+4. Create an HTML report grouped by model with full justifications
+
 ## Provider Configuration
 
 Edit `providers.yaml` to enable/disable providers and set models:
