@@ -67,7 +67,7 @@ This creates `data/out/dataset.jsonl` and extracts images to `data/out/images/`
 
 ### 2. Run AI Models
 ```bash
-python -m src.evalsys.cli run --models "openai:gpt-5,gemini:gemini-2.5-flash,anthropic:claude-3-5-sonnet-latest" --limit 50
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5,gemini:gemini-2.5-flash,anthropic:claude-3-5-sonnet-latest" --limit 50
 ```
 This generates model responses in `data/out/runs/`
 
@@ -85,9 +85,12 @@ Edit `providers.yaml` to enable/disable providers and set models:
 openai:
   enabled: true
   models:
+    - gpt-4o
+openai-reasoning:
+  enabled: true
+  models:
     - gpt-5
     - gpt-5-mini
-    - gpt-4o
 gemini:
   enabled: true
   models:
@@ -98,7 +101,7 @@ gemini:
 
 ## API Keys Required
 
-Set these environment variables in your `.env` file:
+Set these environment variables in your `.env` file (the CLI now auto-loads `.env`):
 
 - `OPENAI_API_KEY` - For OpenAI models
 - `GEMINI_API_KEY` - For Google Gemini models  
@@ -153,7 +156,29 @@ python -m src.evalsys.cli run --models "groq:llama-3.3-70b-versatile" --limit 10
 ### Batch Processing
 Process larger datasets:
 ```bash
-python -m src.evalsys.cli run --models "openai:gpt-5" --limit 200
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --limit 200
+```
+
+### Gemini Testing Examples
+
+Test **Gemini 2.5 Flash** as both model and grader on 5 samples:
+```bash
+python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+Test **Gemini 2.5 Pro** as model with **Gemini 2.5 Flash** as grader on 5 samples:
+```bash
+python -m src.evalsys.cli run --models "gemini:gemini-2.5-pro" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+Test **both Gemini models** together with **Flash as grader**:
+```bash
+python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash,gemini:gemini-2.5-pro" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+Test **GPT-5** as model with **Gemini 2.5 Flash** as grader on 5 samples:
+```bash
+python -m src.evalsys.cli run --models "openai:gpt-5" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
 ## Security Notes

@@ -20,7 +20,14 @@ class OpenAIGrader(Grader):
         # ask for structured JSON
         sys = {"role": "system", "content": "Return a JSON object only."}
         msgs = [sys] + prompt["messages"]
-        resp = self.client.chat.completions.create(model=self.model, messages=msgs, temperature=0.0, max_tokens=350)
+        params = {}
+        if str(self.model).startswith("gpt-5"):
+            params["max_completion_tokens"] = 350
+            # Many gpt-5 chat endpoints use fixed temperature; avoid passing
+        else:
+            params["max_tokens"] = 350
+            params["temperature"] = 0.0
+        resp = self.client.chat.completions.create(model=self.model, messages=msgs, **params)
         txt = resp.choices[0].message.content or "{}"
         data = _robust_json_parse(txt)
         return _normalize_grader_output(data)
