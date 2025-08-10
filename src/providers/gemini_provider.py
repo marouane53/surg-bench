@@ -42,7 +42,7 @@ class GeminiProvider(Provider):
                         # inline base64
                         header, b64 = url.split(",", 1)
                         mime = header.split(";")[0].split(":")[1]
-                        parts.append(types.Part.from_inline_data(data=base64.b64decode(b64), mime_type=mime))
+                        parts.append(types.Part.from_bytes(data=base64.b64decode(b64), mime_type=mime))
                     else:
                         parts.append(types.Part.from_uri_file(url))
         else:
