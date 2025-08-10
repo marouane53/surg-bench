@@ -5,6 +5,11 @@ openai:
     - gpt-5
     - gpt-5-mini
     - gpt-4o
+openai-reasoning:
+  enabled: true
+  base_url: ${OPENAI_BASE_URL:}
+  models:
+    - gpt-5
 gemini:
   enabled: true
   models:

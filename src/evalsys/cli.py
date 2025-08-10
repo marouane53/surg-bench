@@ -14,6 +14,7 @@ from .dataset import QAItem, ModelResponse, GradedResponse
 from .reporting import emit_report
 
 from ..providers.openai_provider import OpenAIProvider
+from ..providers.openai_reasoning_provider import OpenAIReasoningProvider
 from ..providers.gemini_provider import GeminiProvider
 from ..providers.anthropic_provider import AnthropicProvider
 from ..providers.groq_provider import GroqProvider
@@ -28,6 +29,7 @@ app = typer.Typer(add_completion=False)
 
 def _provider_factory(name: str, model: str, cfg) -> Any:
     if name == "openai": return OpenAIProvider(model, cfg.base_url or None)
+    if name == "openai-reasoning": return OpenAIReasoningProvider(model, cfg.base_url or None, effort="medium")
     if name == "gemini": return GeminiProvider(model)
     if name == "anthropic": return AnthropicProvider(model)
     if name == "groq": return GroqProvider(model)
@@ -67,7 +69,7 @@ def run(models: str = typer.Option("openai:gpt-5,gemini:gemini-2.5-flash,anthrop
     pairs = [m.strip() for m in models.split(",") if m.strip()]
     for pair in pairs:
         provider_name, model = pair.split(":", 1)
-        pv_cfg = getattr(cfg, provider_name)
+        pv_cfg = getattr(cfg, provider_name.replace("-", "_"))
         if not pv_cfg.enabled:
             warn(f"{provider_name} disabled in config")
             continue

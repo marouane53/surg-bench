@@ -11,6 +11,7 @@ class ProviderConfig(BaseModel):
 
 class AppConfig(BaseModel):
     openai: ProviderConfig = ProviderConfig()
+    openai_reasoning: ProviderConfig = ProviderConfig()
     gemini: ProviderConfig = ProviderConfig()
     anthropic: ProviderConfig = ProviderConfig()
     groq: ProviderConfig = ProviderConfig()
