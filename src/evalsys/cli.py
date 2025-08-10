@@ -158,7 +158,7 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
     from .reporting import emit_report
     html_path = Path(out_dir) / "report.html"
-    emit_report(csv_path, html_path)
+    emit_report(csv_path, html_path, Path(dataset))
     info(f"Wrote {html_path}")
 
 if __name__ == "__main__":
