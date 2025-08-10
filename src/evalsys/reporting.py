@@ -13,7 +13,23 @@ HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Eval Report</title>
   <style>
+    /* Light theme defaults */
     :root {
+      --bg: #f7f8fc;
+      --panel: #ffffff;
+      --panel-2: #f4f6ff;
+      --text: #1b2340;
+      --muted: #5a6280;
+      --accent: #315efb;
+      --grid: #e9ecf4;
+      --ok: #1e9e63;
+      --warn: #c78a00;
+      --bad: #cc3b3b;
+      --chip: #eef2ff;
+      --chip-text: #2d3a86;
+    }
+    /* Dark theme overrides */
+    [data-theme='dark'] {
       --bg: #0f1220;
       --panel: #171a2b;
       --panel-2: #1e2236;
@@ -28,30 +44,24 @@ HTML = """
       --chip-text: #c8d2ff;
     }
     * { box-sizing: border-box; }
-    body {
-      margin: 0; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji";
-      color: var(--text); background: radial-gradient(1200px 800px at 0% -10%, #182043 0%, var(--bg) 60%);
-    }
+    body { margin: 0; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji"; color: var(--text); background: var(--bg); }
     .container { max-width: 1200px; margin: 0 auto; }
     header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 18px; }
     header h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: 0.3px; }
     header .meta { color: var(--muted); font-size: 13px; }
+    header .actions { display:flex; gap:8px; align-items:center; }
 
     .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid #232845; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); overflow: hidden; }
     .card .hd { padding: 14px 16px; border-bottom: 1px solid #262b49; display:flex; align-items:center; justify-content:space-between; }
     .card .bd { padding: 16px; }
 
-    /* Chart area */
+    /* Chart area: ranked bar chart */
     #chartWrap { position: relative; }
-    #scoreCanvas { width: 100%; height: 280px; display:block; }
-    .legend { display:flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-    .legend .item { display:flex; align-items:center; gap: 8px; padding: 6px 8px; background: var(--chip); color: var(--chip-text); border-radius: 999px; cursor: pointer; user-select: none; border: 1px solid #2e375f; }
-    .legend .sw { width: 12px; height: 12px; border-radius: 3px; background: #999; border: 1px solid #0006; box-shadow: inset 0 0 0 1px #fff2; }
-    .legend .avg { color: var(--muted); font-size: 12px; margin-left: 4px; }
+    #scoreCanvas { width: 100%; height: 360px; display:block; }
     .controls { display:flex; gap:10px; align-items:center; }
-    .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid #2c3356; background: #22284a; color: #d8ddff; cursor: pointer; font-size: 12px; }
-    .btn:hover { filter: brightness(1.1); }
-    .tooltip { position: absolute; pointer-events:none; background:#0d1022; color:#dce1ff; border:1px solid #2b3156; padding:8px 10px; border-radius:8px; font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,0.3); display:none; z-index: 10; }
+    .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid #cfd6ff33; background: var(--chip); color: var(--chip-text); cursor: pointer; font-size: 12px; }
+    .btn:hover { filter: brightness(1.03); }
+    .tooltip { position: absolute; pointer-events:none; background:#0d1022; color:#dce1ff; border:1px solid #2b3156; padding:8px 10px; border-radius:8px; font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); display:none; z-index: 10; }
 
     /* Q&A sections */
     .sect { margin-top: 22px; }
@@ -82,22 +92,17 @@ HTML = """
   <div class="container">
     <header>
       <h1>AI Evaluation Report</h1>
-      <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: {{ grader_name }}</div>
+      <div class="actions">
+        <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: {{ grader_name }}</div>
+        <button class="btn" id="themeToggle" type="button">Toggle Theme</button>
+      </div>
     </header>
 
     <!-- Scores Chart Card -->
     <section class="card" id="chartCard">
-      <div class="hd">
-        <div class="controls">
-          <strong>Scores by Model</strong>
-          <button class="btn" id="toggleAll">Toggle All</button>
-          <button class="btn" id="resetView">Reset</button>
-        </div>
-        <div class="muted">Hover points for details</div>
-      </div>
+      <div class="hd"><div class="controls"><strong>Average Scores (ranked)</strong></div><div class="muted">Hover bars for details</div></div>
       <div class="bd" id="chartWrap">
-        <canvas id="scoreCanvas" width="1200" height="320"></canvas>
-        <div class="legend" id="legend"></div>
+        <canvas id="scoreCanvas" width="1200" height="360"></canvas>
         <div class="tooltip" id="tip"></div>
       </div>
     </section>
@@ -121,7 +126,7 @@ HTML = """
                 <span class="scorechip {{ bucket }}">Score: {{ "%.3f"|format(r.score) }}</span>
                 {% if r.harmful %}<span class="scorechip score-bad">Harmful</span>{% endif %}
                 {% if r.images and r.images|length > 0 %}
-                  <button class="btn toggle" data-target="img-{{ r.qid|replace('.', '_') }}-{{ loop.index }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
+                  <button class="btn toggle" type="button" data-target="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
                 {% endif %}
               </summary>
               <div class="question"><div class="k">Question</div><div class="mono">{{ r.question_text }}</div></div>
@@ -136,11 +141,11 @@ HTML = """
                 </div></div>
               {% endif %}
               {% if r.images and r.images|length > 0 %}
-                <div class="gallery" id="img-{{ r.qid|replace('.', '_') }}-{{ loop.index }}">
+                <div class="gallery" id="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">
                   <div class="k">Images</div>
                   <div class="thumbs">
                     {% for im in r.images %}
-                      <img data-src="{{ im }}" alt="{{ r.qid }} image {{ loop.index }}" loading="lazy" />
+                      <img data-src="{{ im.rel }}" data-alt="{{ im.abs }}" alt="{{ r.qid }} image {{ loop.index }}" loading="lazy" />
                     {% endfor %}
                   </div>
                 </div>
@@ -165,198 +170,122 @@ HTML = """
       canvas.height = canvas.clientHeight * DPR;
       ctx.scale(DPR, DPR);
 
-      const PADDING = {l: 44, r: 16, t: 18, b: 26};
+      const PADDING = {l: 140, r: 40, t: 20, b: 30};
       const W = canvas.clientWidth, H = canvas.clientHeight;
       const innerW = W - PADDING.l - PADDING.r;
       const innerH = H - PADDING.t - PADDING.b;
 
       const qids = DATA.meta.qids;
       const models = DATA.meta.models;
-      const colorFor = (name) => {
-        const i = models.indexOf(name);
+      const colorForIdx = (i) => {
         const hue = (i * 137.508) % 360; // golden angle spacing
-        return `hsl(${hue}deg 70% 60%)`;
+        return `hsl(${hue}deg 70% 55%)`;
       };
 
-      // Build series points per model
-      const byModel = {};
-      for (const pt of DATA.points) {
-        if (!byModel[pt.model]) byModel[pt.model] = [];
-        byModel[pt.model].push({ x: qids.indexOf(pt.qid), y: pt.score, qid: pt.qid, provider: pt.provider });
-      }
-      Object.keys(byModel).forEach(m => byModel[m].sort((a,b) => a.x - b.x));
-
-      const state = { visible: Object.fromEntries(models.map(m => [m, true])) };
-
-      const legend = document.getElementById('legend');
-      const toggleAll = document.getElementById('toggleAll');
-      const resetView = document.getElementById('resetView');
+      // Build ranked bars from averages (already sorted best->worst)
+      const bars = [...(DATA.bars || [])];
       const tip = document.getElementById('tip');
 
       function drawAxes() {
         ctx.clearRect(0,0,W,H);
-        // grid
-        ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
-        ctx.lineWidth = 1;
-        ctx.beginPath();
+        // grid background
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--panel-2') || '#f4f6ff';
+        ctx.fillRect(PADDING.l, PADDING.t, innerW, innerH);
+        // vertical grid lines and x labels 0..1
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
         for (let i=0;i<=5;i++) {
-          const y = PADDING.t + innerH * (i/5);
-          ctx.moveTo(PADDING.l, y);
-          ctx.lineTo(W - PADDING.r, y);
+          const x = PADDING.l + innerW*(i/5);
+          ctx.fillRect(x, PADDING.t, 1, innerH);
         }
-        ctx.stroke();
-        // axes
-        ctx.strokeStyle = '#3a4066';
-        ctx.beginPath();
-        ctx.moveTo(PADDING.l, PADDING.t);
-        ctx.lineTo(PADDING.l, PADDING.t + innerH);
-        ctx.lineTo(W - PADDING.r, PADDING.t + innerH);
-        ctx.stroke();
-        // y labels 0..1
-        ctx.fillStyle = '#b5bcdf';
+        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted');
         ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
         for (let i=0;i<=5;i++) {
-          const val = (1 - i/5).toFixed(1);
-          const y = PADDING.t + innerH * (i/5) + 4;
-          ctx.fillText(val, 6, y);
+          const x = PADDING.l + innerW*(i/5);
+          ctx.fillText((i/5).toFixed(1), x-6, H-8);
         }
-      }
-
-      function toXY(p) {
-        const x = PADDING.l + (p.x / Math.max(1, qids.length-1)) * innerW;
-        const y = PADDING.t + (1 - p.y) * innerH;
-        return {x, y};
       }
 
       function drawPoints(progress=1) {
-        for (const m of models) {
-          if (!state.visible[m]) continue;
-          const color = colorFor(m);
-          // line
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          let started = false;
-          for (const p of byModel[m]) {
-            const {x, y} = toXY(p);
-            const yA = PADDING.t + innerH; // start from zero for animation
-            const yE = y;
-            const yT = yA + (yE - yA) * progress;
-            if (!started) { ctx.moveTo(x, yT); started = true; }
-            else { ctx.lineTo(x, yT); }
-          }
-          ctx.stroke();
-          // points
+        // bars
+        const rowH = Math.max(18, Math.min(40, innerH / Math.max(1,bars.length)));
+        const gap = 8;
+        const totalH = bars.length * (rowH + gap) - gap;
+        const offsetY = PADDING.t + Math.max(0, (innerH - totalH)/2);
+        for (let i=0;i<bars.length;i++) {
+          const b = bars[i];
+          const y = offsetY + i*(rowH+gap);
+          const w = (b.avg) * innerW * progress;
+          // label
+          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text');
+          ctx.fillText(b.model, 12, y + rowH*0.7);
+          // bar
+          const color = colorForIdx(i);
           ctx.fillStyle = color;
-          for (const p of byModel[m]) {
-            const {x, y} = toXY(p);
-            const yA = PADDING.t + innerH;
-            const yE = y;
-            const yT = yA + (yE - yA) * progress;
-            ctx.beginPath();
-            ctx.arc(x, yT, 3.2, 0, Math.PI*2);
-            ctx.fill();
-            ctx.strokeStyle = '#0007';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
+          ctx.fillRect(PADDING.l, y, Math.max(2, w), rowH);
+          // value chip
+          const chipW = 60;
+          ctx.fillStyle = '#0008';
+          ctx.fillRect(PADDING.l + Math.max(2,w) - chipW, y, chipW, rowH);
+          ctx.fillStyle = '#fff';
+          ctx.fillText((b.avg).toFixed(3), PADDING.l + Math.max(2,w) - chipW + 6, y + rowH*0.7);
+          b._geom = {x:PADDING.l, y, w:(b.avg)*innerW, h:rowH};
         }
       }
 
-      function render(progress=1) {
-        drawAxes();
-        drawPoints(progress);
-      }
+      function render(progress=1) { drawAxes(); drawPoints(progress); }
 
       // initial animation
       let t0 = null;
       function animate(ts) {
         if (!t0) t0 = ts;
-        const d = ts - t0;
-        const p = Math.min(1, d / 800);
+        const d = ts - t0; const p = Math.min(1, d/800);
         render(p);
         if (p < 1) requestAnimationFrame(animate);
       }
       requestAnimationFrame(animate);
 
-      // legend build
-      function avgFor(m) {
-        const arr = DATA.points.filter(p => p.model === m).map(p => p.score);
-        return arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length) : 0;
-      }
-      function rebuildLegend() {
-        legend.innerHTML = '';
-        for (const m of models) {
-          const el = document.createElement('div');
-          el.className = 'item';
-          el.dataset.model = m;
-          const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = colorFor(m);
-          const txt = document.createElement('span'); txt.textContent = m;
-          const avg = document.createElement('span'); avg.className = 'avg'; avg.textContent = `avg ${avgFor(m).toFixed(3)}`;
-          el.appendChild(sw); el.appendChild(txt); el.appendChild(avg);
-          if (!state.visible[m]) el.style.opacity = 0.4;
-          el.addEventListener('click', () => { state.visible[m] = !state.visible[m]; rebuildLegend(); render(1); });
-          legend.appendChild(el);
-        }
-      }
-      rebuildLegend();
-
-      toggleAll.addEventListener('click', () => {
-        const anyOn = Object.values(state.visible).some(v => v);
-        for (const m of models) state.visible[m] = !anyOn;
-        rebuildLegend(); render(1);
-      });
-      resetView.addEventListener('click', () => {
-        for (const m of models) state.visible[m] = true;
-        rebuildLegend(); requestAnimationFrame(animate); t0 = null;
-      });
-
-      // tooltip interactions
+      // tooltip interactions for bars
       canvas.addEventListener('mousemove', (ev) => {
-        const rect = canvas.getBoundingClientRect();
-        const x = (ev.clientX - rect.left);
-        const y = (ev.clientY - rect.top);
-        let best = null; let bestD = 9999;
-        for (const m of models) {
-          if (!state.visible[m]) continue;
-          for (const p of byModel[m]) {
-            const pt = toXY(p);
-            const dx = (pt.x - x), dy = (pt.y - y);
-            const d = Math.hypot(dx, dy);
-            if (d < bestD && d < 14) { bestD = d; best = {m, ...p, px: pt.x, py: pt.y}; }
-          }
+        const rect = canvas.getBoundingClientRect(); const x = ev.clientX - rect.left; const y = ev.clientY - rect.top;
+        let hit = null;
+        for (const b of bars) {
+          const g = b._geom; if (!g) continue;
+          if (x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h) { hit = b; break; }
         }
-        if (best) {
-          tip.style.display = 'block';
-          tip.style.left = (best.px + 12) + 'px';
-          tip.style.top = (best.py - 10) + 'px';
-          tip.innerHTML = `<div><strong>${best.m}</strong> <span class="muted">(${best.provider})</span></div>
-                           <div>QID: <strong>${best.qid}</strong></div>
-                           <div>Score: <strong>${best.y.toFixed(3)}</strong></div>`;
-        } else {
-          tip.style.display = 'none';
-        }
+        if (hit) {
+          tip.style.display = 'block'; tip.style.left = (x + 12) + 'px'; tip.style.top = (y - 8) + 'px';
+          tip.innerHTML = `<div><strong>${hit.model}</strong> <span class=\"muted\">(${hit.provider})</span></div><div>Average: <strong>${hit.avg.toFixed(3)}</strong> (n=${hit.n})</div>`;
+        } else { tip.style.display = 'none'; }
       });
       canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 
-      // Images lazy-toggle
+      // Images lazy-toggle with details-open and fallback path
       document.addEventListener('click', (e) => {
-        const btn = e.target.closest('button.toggle');
-        if (!btn) return;
-        const id = btn.getAttribute('data-target');
-        const panel = document.getElementById(id);
-        if (!panel) return;
-        const wasHidden = getComputedStyle(panel).display === 'none';
-        panel.style.display = wasHidden ? 'block' : 'none';
+        const btn = e.target.closest('button.toggle'); if (!btn) return; e.preventDefault(); e.stopPropagation();
+        const id = btn.getAttribute('data-target'); const panel = document.getElementById(id); if (!panel) return;
+        const det = btn.closest('details'); if (det && !det.open) det.open = true;
+        const wasHidden = getComputedStyle(panel).display === 'none'; panel.style.display = wasHidden ? 'block' : 'none';
         if (wasHidden) {
-          // load images
           for (const img of panel.querySelectorAll('img[data-src]')) {
-            if (!img.src) img.src = img.getAttribute('data-src');
+            if (!img.src) {
+              img.onerror = () => { if (img.dataset.alt) { img.onerror = null; img.src = img.dataset.alt; } };
+              img.src = img.getAttribute('data-src');
+            }
           }
           btn.textContent = 'Hide images';
         } else {
-          btn.textContent = btn.textContent.replace('Hide', 'Show');
+          const cnt = panel.querySelectorAll('img').length; btn.textContent = `Show ${cnt} image${cnt>1?'s':''}`;
         }
+      });
+
+      // Theme toggle with persistence
+      const themeToggle = document.getElementById('themeToggle');
+      const applyTheme = (t) => { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); };
+      const initial = localStorage.getItem('theme') || 'light';
+      applyTheme(initial);
+      themeToggle && themeToggle.addEventListener('click', () => {
+        const cur = document.documentElement.getAttribute('data-theme') || 'light';
+        applyTheme(cur === 'light' ? 'dark' : 'light');
       });
     </script>
 
@@ -411,12 +340,13 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         # Map CSV row to enriched record
         qi = qmap.get(qid, {})
         imgs = [str(x) for x in qi.get("images", [])]
-        # Fix image paths to be relative to report location
-        fixed_imgs: List[str] = []
+        # Fix image paths and add absolute-like fallback
+        fixed_imgs: List[Dict[str, str]] = []
         for p in imgs:
             base = os.path.basename(p)
-            fixed = str(Path(rel_images_base) / base)
-            fixed_imgs.append(fixed)
+            relp = str(Path(rel_images_base) / base)
+            absp = "/out/images/" + base
+            fixed_imgs.append({"rel": relp, "abs": absp})
         # harmful flag normalization
         hraw = row.get("harmful", False)
         if isinstance(hraw, float) and pd.isna(hraw):
@@ -425,6 +355,8 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             harmful = bool(hraw)
         else:
             harmful = str(hraw).strip().lower() in ("1", "true", "yes", "y")
+
+        model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", model).strip("_") or "model"
 
         rec = {
             "provider": provider,
@@ -441,6 +373,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             "page_start": int(qi.get("page_start", 0) or 0),
             "page_end": int(qi.get("page_end", 0) or 0),
             "images": fixed_imgs,
+            "model_slug": model_slug,
         }
         rows_by_model.setdefault(model, []).append(rec)
 
@@ -467,12 +400,27 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         for r in rows:
             points.append({"model": m, "provider": r["provider"], "qid": r["qid"], "score": r["score"]})
 
+    # Ranked bars: best to worst
+    bars = sorted(
+        (
+            {
+                "model": m,
+                "provider": (rows_by_model[m][0]["provider"] if rows_by_model.get(m) else ""),
+                "avg": model_avgs[m],
+                "n": len(rows_by_model.get(m, [])),
+            }
+            for m in models
+        ),
+        key=lambda x: x["avg"], reverse=True
+    )
+
     data_json = json.dumps({
         "meta": {
             "qids": qids,
             "models": models,
         },
         "points": points,
+        "bars": bars,
     })
 
     # Determine grader name (if consistent)
