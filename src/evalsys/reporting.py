@@ -93,7 +93,7 @@ HTML = """
     <header>
       <h1>AI Evaluation Report</h1>
       <div class="actions">
-        <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: {{ grader_name }}</div>
+        <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: {{ grader_name }}{% if total_empty > 0 %} · Empty answers: {{ total_empty }}{% endif %}</div>
         <button class="btn" id="themeToggle" type="button">Toggle Theme</button>
       </div>
     </header>
@@ -106,6 +106,26 @@ HTML = """
         <div class="tooltip" id="tip"></div>
       </div>
     </section>
+
+    {% if total_empty > 0 %}
+    <!-- Empty Answers Summary -->
+    <section class="card" style="margin:12px 0;">
+      <div class="hd">
+        <strong>Empty Answers Summary</strong>
+        <div class="muted">{{ total_empty }} empty answers not included in scoring</div>
+      </div>
+      <div class="bd">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+          {% for model, count in empty_stats.items() %}
+            <div style="padding: 8px 12px; background: var(--panel-2); border-radius: 8px; border: 1px solid var(--grid);">
+              <div style="font-weight: 600;">{{ model }}</div>
+              <div style="color: var(--muted); font-size: 12px;">{{ count }} empty answer{{ 's' if count > 1 else '' }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+    {% endif %}
 
     <!-- Q&A Details -->
     <section class="sect">
@@ -319,12 +339,22 @@ def _safe_list(val: Any) -> List[str]:
     except Exception:
         return []
 
-def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None):
+def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None, empty_stats_path: Optional[Path] = None):
     df = pd.read_csv(csv_path)
     # If dataset path not provided, try default relative to CSV
     if dataset_path is None:
         dataset_path = (csv_path.parent.parent / "dataset.jsonl") if csv_path.parent.name == "graded" else (csv_path.parent / "dataset.jsonl")
     qmap = _read_dataset(dataset_path)
+
+    # Load empty answer statistics if available
+    empty_stats = {}  # model -> count
+    total_empty = 0
+    if empty_stats_path and empty_stats_path.exists():
+        empty_df = pd.read_csv(empty_stats_path)
+        for _, row in empty_df.iterrows():
+            model = str(row["model"])
+            empty_stats[model] = empty_stats.get(model, 0) + 1
+            total_empty += 1
 
     # Resolve images relative path from HTML dir to images folder
     html_dir = html_path.parent
@@ -437,5 +467,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         models=models,
         data_json=data_json,
         grader_name=grader_name,
+        empty_stats=empty_stats,
+        total_empty=total_empty,
     )
     html_path.write_text(html, encoding="utf-8")

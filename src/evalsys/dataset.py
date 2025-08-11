@@ -19,6 +19,8 @@ class ModelResponse(BaseModel):
     answer: str
     latency_ms: int
     used_images: int
+    retry_attempts: int = 0  # Number of retries attempted
+    is_empty_answer: bool = False  # True if final answer is empty after all retries
 
 class GradedResponse(BaseModel):
     provider: str

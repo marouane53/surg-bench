@@ -114,8 +114,40 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                 # remove images
                 if isinstance(msg["messages"][1]["content"], list):
                     msg["messages"][1]["content"] = [x for x in msg["messages"][1]["content"] if x.get("type")=="text"]
-            text, ms = _safe_ask(pv, msg["messages"], max_tokens=max_tokens)
-            recs.append(ModelResponse(provider=provider_name, model=model, qid=it.qid, answer=text, latency_ms=ms, used_images=len(it.images)))
+            
+            # Retry logic for empty answers
+            text = ""
+            total_ms = 0
+            retry_count = 0
+            max_retries = cfg.empty_answer_retries
+            
+            for attempt in range(max_retries + 1):  # +1 for initial attempt
+                text, ms = _safe_ask(pv, msg["messages"], max_tokens=max_tokens)
+                total_ms += ms
+                
+                # Check if answer is empty (only whitespace)
+                if text and text.strip():
+                    break  # Got a non-empty answer, stop retrying
+                
+                if attempt < max_retries:  # Don't increment on last attempt
+                    retry_count += 1
+                    warn(f"Empty answer from {provider_name}:{model} for {it.qid}, retrying ({retry_count}/{max_retries})")
+            
+            # Mark as empty if final answer is still empty
+            is_empty = not (text and text.strip())
+            if is_empty:
+                warn(f"Final answer is empty for {provider_name}:{model} {it.qid} after {retry_count} retries")
+            
+            recs.append(ModelResponse(
+                provider=provider_name, 
+                model=model, 
+                qid=it.qid, 
+                answer=text, 
+                latency_ms=total_ms, 
+                used_images=len(it.images),
+                retry_attempts=retry_count,
+                is_empty_answer=is_empty
+            ))
         path = Path(out_dir) / f"{provider_name}__{model.replace('/','_')}.jsonl"
         with path.open("w", encoding="utf-8") as f:
             for r in recs:
@@ -138,12 +170,29 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
         g = GeminiGrader(model=grader.split(":",1)[1])
 
     rows = []
+    empty_answer_stats = []  # Track empty answers separately
     for path in Path(runs_dir).glob("*.jsonl"):
         prov, model = path.stem.split("__", 1)
         model = model.replace("_", "/")
         for line in path.read_text(encoding="utf-8").splitlines():
             r = ModelResponse.model_validate_json(line)
             it = items[r.qid]
+            
+            # Check if this is an empty answer (either marked as such or truly empty)
+            is_empty = getattr(r, 'is_empty_answer', False) or not (r.answer and r.answer.strip())
+            
+            if is_empty:
+                # Track empty answer but don't grade it
+                empty_answer_stats.append({
+                    "provider": r.provider,
+                    "model": r.model,
+                    "qid": r.qid,
+                    "retry_attempts": getattr(r, 'retry_attempts', 0)
+                })
+                info(f"Skipping grading for empty answer: {r.provider}:{r.model} {r.qid}")
+                continue
+            
+            # Grade non-empty answers normally
             prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
             score, just, missed, harmful = g.grade(prompt)
             gr = GradedResponse(provider=r.provider, model=r.model, qid=r.qid, answer=r.answer,
@@ -156,9 +205,22 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
     df.to_csv(csv_path, index=False)
     info(f"Wrote {csv_path}")
 
+    # Save empty answer statistics
+    if empty_answer_stats:
+        empty_df = pd.DataFrame(empty_answer_stats)
+        empty_path = Path(out_dir) / "empty_answers.csv"
+        empty_df.to_csv(empty_path, index=False)
+        info(f"Wrote empty answer stats to {empty_path}")
+        
+        # Print summary
+        empty_count = len(empty_answer_stats)
+        total_count = len(rows) + empty_count
+        info(f"Empty answers: {empty_count}/{total_count} ({empty_count/total_count*100:.1f}%)")
+
     from .reporting import emit_report
     html_path = Path(out_dir) / "report.html"
-    emit_report(csv_path, html_path, Path(dataset))
+    empty_stats_path = Path(out_dir) / "empty_answers.csv" if empty_answer_stats else None
+    emit_report(csv_path, html_path, Path(dataset), empty_stats_path)
     info(f"Wrote {html_path}")
 
 if __name__ == "__main__":

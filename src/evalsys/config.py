@@ -19,6 +19,8 @@ class AppConfig(BaseModel):
     openrouter: ProviderConfig = ProviderConfig()
     mistral: ProviderConfig = ProviderConfig(enabled=False)
     cohere: ProviderConfig = ProviderConfig(enabled=False)
+    # Retry configuration for empty answers
+    empty_answer_retries: int = 2
 
 def _expand_env(value: Any) -> Any:
     if isinstance(value, str):
