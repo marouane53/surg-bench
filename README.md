@@ -8,6 +8,7 @@ A comprehensive evaluator that ingests surgical PDF documents, extracts Q&A with
 - **Multi-Provider Support**: OpenAI, Gemini, Anthropic, Groq, xAI, OpenRouter (Mistral & Cohere optional)
 - **Switchable Graders**: GPT-5 Mini or Gemini 2.5 Flash for consistent evaluation
 - **Comprehensive Reporting**: CSV output and HTML reports with scoring analytics
+  - Chart modes: exclude rejections, count rejections as 0, or show rejection rate (bigger is worse)
 
 ## Requirements
 
@@ -75,7 +76,19 @@ This generates model responses in `data/out/runs/`
 ```bash
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
-This creates `data/out/graded/scores.csv` and `data/out/graded/report.html`
+This creates per-model CSVs in `data/out/graded/` and a unified report:
+- `scores__<model>.csv` for graded answers per model
+- `empty_answers__<model>.csv` for empty answers per model (if any)
+- `report.html` combining all per-model results
+
+### Regenerate Report Only
+Rebuild the HTML report from existing graded outputs (no re-grading). Point to the graded directory with per-model CSVs:
+```bash
+python -m src.evalsys.cli report \
+  --scores data/out/graded \
+  --dataset data/out/dataset.jsonl
+```
+You can also pass explicit files or an explicit `--empty-answers` path (file or directory) if needed.
 
 ## Quick Testing Example
 
@@ -152,8 +165,9 @@ python -m tests.test_prompt_packing
 - `data/out/dataset.jsonl` - Extracted Q&A items
 - `data/out/images/` - Extracted images from PDF
 - `data/out/runs/*.jsonl` - Raw model responses
-- `data/out/graded/scores.csv` - Graded results
-- `data/out/graded/report.html` - HTML report
+- `data/out/graded/scores__<model>.csv` - Graded results per model
+- `data/out/graded/empty_answers__<model>.csv` - Empty answers per model (if any)
+- `data/out/graded/report.html` - Unified HTML report
 
 ## Architecture
 

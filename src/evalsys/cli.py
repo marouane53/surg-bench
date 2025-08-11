@@ -169,21 +169,21 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
     else:
         g = GeminiGrader(model=grader.split(":",1)[1])
 
-    rows = []
-    empty_answer_stats = []  # Track empty answers separately
+    # Accumulate per-model rows
+    rows_by_model: Dict[str, list] = {}
+    empty_by_model: Dict[str, list] = {}
     for path in Path(runs_dir).glob("*.jsonl"):
-        prov, model = path.stem.split("__", 1)
-        model = model.replace("_", "/")
+        prov, model_slug = path.stem.split("__", 1)
+        model = model_slug.replace("_", "/")
         for line in path.read_text(encoding="utf-8").splitlines():
             r = ModelResponse.model_validate_json(line)
             it = items[r.qid]
-            
-            # Check if this is an empty answer (either marked as such or truly empty)
+
+            # Check if this is an empty answer (either marked or truly empty)
             is_empty = getattr(r, 'is_empty_answer', False) or not (r.answer and r.answer.strip())
-            
+
             if is_empty:
-                # Track empty answer but don't grade it
-                empty_answer_stats.append({
+                empty_by_model.setdefault(r.model, []).append({
                     "provider": r.provider,
                     "model": r.model,
                     "qid": r.qid,
@@ -191,36 +191,72 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
                 })
                 info(f"Skipping grading for empty answer: {r.provider}:{r.model} {r.qid}")
                 continue
-            
-            # Grade non-empty answers normally
+
+            # Grade non-empty answers normally (concise progress)
+            info(f"Grading {r.provider}:{r.model} {r.qid}")
             prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
-            score, just, missed, harmful = g.grade(prompt)
+            try:
+                score, just, missed, harmful = g.grade(prompt)
+            except Exception as e:
+                warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
+                continue
+            info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f}")
             gr = GradedResponse(provider=r.provider, model=r.model, qid=r.qid, answer=r.answer,
                                 grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
-            rows.append(gr.model_dump())
+            rows_by_model.setdefault(r.model, []).append(gr.model_dump())
 
-    # save csv and per item jsonl
-    df = pd.DataFrame(rows)
-    csv_path = Path(out_dir) / "scores.csv"
-    df.to_csv(csv_path, index=False)
-    info(f"Wrote {csv_path}")
+    # Write per-model CSVs
+    def _slug(s: str) -> str:
+        return s.replace('/', '_')
 
-    # Save empty answer statistics
-    if empty_answer_stats:
-        empty_df = pd.DataFrame(empty_answer_stats)
-        empty_path = Path(out_dir) / "empty_answers.csv"
-        empty_df.to_csv(empty_path, index=False)
-        info(f"Wrote empty answer stats to {empty_path}")
-        
-        # Print summary
-        empty_count = len(empty_answer_stats)
-        total_count = len(rows) + empty_count
-        info(f"Empty answers: {empty_count}/{total_count} ({empty_count/total_count*100:.1f}%)")
+    total_rows = 0
+    total_empties = 0
+    for model, rows in rows_by_model.items():
+        df = pd.DataFrame(rows)
+        csv_path = Path(out_dir) / f"scores__{_slug(model)}.csv"
+        df.to_csv(csv_path, index=False)
+        total_rows += len(rows)
+        info(f"Wrote {csv_path}")
 
+    for model, rows in empty_by_model.items():
+        if rows:
+            empty_df = pd.DataFrame(rows)
+            empty_path = Path(out_dir) / f"empty_answers__{_slug(model)}.csv"
+            empty_df.to_csv(empty_path, index=False)
+            total_empties += len(rows)
+            info(f"Wrote empty answer stats to {empty_path}")
+
+    if total_rows + total_empties > 0:
+        info(f"Empty answers: {total_empties}/{total_rows + total_empties} ({(total_empties/(total_rows+total_empties))*100:.1f}%)")
+
+    # Unified report from per-model CSVs
     from .reporting import emit_report
     html_path = Path(out_dir) / "report.html"
-    empty_stats_path = Path(out_dir) / "empty_answers.csv" if empty_answer_stats else None
-    emit_report(csv_path, html_path, Path(dataset), empty_stats_path)
+    emit_report(Path(out_dir), html_path, Path(dataset), Path(out_dir))
+    info(f"Wrote {html_path}")
+
+@app.command()
+def report(scores: str = typer.Option("data/out/graded", help="Path to scores.csv or directory with per-model CSVs"),
+           dataset: str = typer.Option("data/out/dataset.jsonl", help="Path to dataset.jsonl"),
+           empty_answers: str = typer.Option(None, help="Optional path to empty_answers.csv or directory with per-model files"),
+           out_html: str = typer.Option(None, help="Optional output HTML path (defaults next to scores input)")):
+    """Regenerate the HTML report from existing scores.csv and optional empty_answers.csv.
+
+    This does not rerun grading or model inference.
+    """
+    csv_path = Path(scores)
+    if not csv_path.exists():
+        error(f"Scores path not found: {csv_path}")
+        raise typer.Exit(code=2)
+    base_for_html = csv_path if csv_path.is_dir() else csv_path.parent
+    html_path = Path(out_html) if out_html else (base_for_html / "report.html")
+    if empty_answers:
+        empty_path = Path(empty_answers)
+    else:
+        empty_path = base_for_html
+    ds_path = Path(dataset)
+    info(f"Generating report from {csv_path} (empty path: {empty_path})")
+    emit_report(csv_path, html_path, ds_path, empty_path)
     info(f"Wrote {html_path}")
 
 if __name__ == "__main__":

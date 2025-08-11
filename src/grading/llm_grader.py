@@ -6,9 +6,11 @@ from openai import OpenAI
 try:
     from google import genai
     from google.genai import types
+    from google.genai import errors as genai_errors
 except ImportError:
     genai = None
     types = None
+    genai_errors = None
 
 class OpenAIGrader(Grader):
     name = "gpt-5-mini"
@@ -49,10 +51,38 @@ class GeminiGrader(Grader):
             else:
                 text += m["content"] if isinstance(m["content"], str) else "\n".join([p.get("text","") for p in m["content"] if p.get("type")=="text"])
         text = sys + "\n" + text
-        resp = self.client.models.generate_content(model=self.model, contents=[text], config=types.GenerateContentConfig(temperature=0))
-        raw = resp.text or "{}"
-        data = _robust_json_parse(raw)
-        return _normalize_grader_output(data)
+        # Retry/backoff on transient server errors (e.g., 503)
+        attempts = int(os.getenv("GRADER_RETRIES", "4"))
+        delay = 1.0
+        last_exc: Exception | None = None
+        for i in range(attempts):
+            try:
+                resp = self.client.models.generate_content(
+                    model=self.model,
+                    contents=[text],
+                    config=types.GenerateContentConfig(temperature=0)
+                )
+                raw = resp.text or "{}"
+                data = _robust_json_parse(raw)
+                return _normalize_grader_output(data)
+            except Exception as e:
+                # Identify retryable server-side/network issues
+                msg = str(e)
+                retryable = False
+                if genai_errors is not None and isinstance(e, getattr(genai_errors, "ServerError", tuple())):
+                    retryable = True
+                elif "503" in msg or "UNAVAILABLE" in msg or "temporarily unavailable" in msg.lower():
+                    retryable = True
+                if not retryable or i == attempts - 1:
+                    last_exc = e
+                    break
+                time.sleep(min(delay, 10.0))
+                delay *= 2
+        # If we reach here, retries failed
+        if last_exc:
+            raise last_exc
+        # Fallback safeguard (should not reach)
+        return 0.0, "", [], False
 
 def _strip_code_fence(s: str) -> str:
     s = s.strip()
