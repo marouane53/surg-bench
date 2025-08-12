@@ -115,6 +115,39 @@ This will:
 3. Grade all responses using Gemini 2.5 Flash as the evaluator
 4. Create an HTML report grouped by model with full justifications
 
+## Advanced Reasoning Model Comparison Example
+
+To comprehensively test OpenAI's reasoning models at different effort levels and compare with standard chat models:
+
+```bash
+# 0) Ingest once
+python -m src.evalsys.cli ingest --pdf data/surgical.pdf
+
+# 1) Run multiple models (defaults to data/out/runs)
+python -m src.evalsys.cli run --models "openai:gpt-5-chat" --limit 50
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort minimal --limit 50
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort low --limit 50
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort medium --limit 50
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort high --limit 50
+
+# 2) Grade them ALL into the SAME default folder data/out/graded
+#    Use --label so each variant appears as its own model in one combined report.
+python -m src.evalsys.cli grade --runs_dir "data/out/runs" --grader "gemini:gemini-2.5-flash" --label "chat"    # will pick up the chat file(s)
+python -m src.evalsys.cli grade --runs_dir "data/out/runs" --grader "gemini:gemini-2.5-flash" --label "minimal"
+python -m src.evalsys.cli grade --runs_dir "data/out/runs" --grader "gemini:gemini-2.5-flash" --label "low"
+python -m src.evalsys.cli grade --runs_dir "data/out/runs" --grader "gemini:gemini-2.5-flash" --label "medium"
+python -m src.evalsys.cli grade --runs_dir "data/out/runs" --grader "gemini:gemini-2.5-flash" --label "high"
+
+# 3) Build one combined report for everything in data/out/graded
+python -m src.evalsys.cli report --scores data/out/graded --dataset data/out/dataset.jsonl
+# => data/out/graded/report.html
+```
+
+This comprehensive workflow:
+1. Tests both standard chat models and reasoning models at all effort levels
+2. Uses labels to distinguish each reasoning effort level in the final report
+3. Generates a unified comparison report showing performance differences across reasoning strategies
+
 ## Provider Configuration
 
 Edit `providers.yaml` to enable/disable providers and set models:
@@ -219,6 +252,18 @@ Test **GPT-5** as model with **Gemini 2.5 Flash** as grader on 5 samples:
 ```bash
 python -m src.evalsys.cli run --models "openai:gpt-5" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
+
+
+source .venv/bin/activate && python -m src.evalsys.cli grade --runs-dir "data/out/runs" --grader "gemini:gemini-2.5-flash" --label "high"
+
+
+
+
+
+
+
+
+
 
 ## Security Notes
 

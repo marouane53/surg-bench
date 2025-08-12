@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json, os, time
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import typer
 import pandas as pd
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -51,16 +51,26 @@ def _load_env_file(path: str = ".env") -> None:
 
 app = typer.Typer(add_completion=False)
 
-def _provider_factory(name: str, model: str, cfg) -> Any:
-    if name == "openai": return OpenAIProvider(model, cfg.base_url or None)
-    if name == "openai-reasoning": return OpenAIReasoningProvider(model, cfg.base_url or None, effort="minimal")
-    if name == "gemini": return GeminiProvider(model)
-    if name == "anthropic": return AnthropicProvider(model)
-    if name == "groq": return GroqProvider(model)
-    if name == "xai": return XAIProvider(model, cfg.base_url or None)
-    if name == "openrouter": return OpenRouterProvider(model)
-    if name == "mistral": return MistralProvider(model)
-    if name == "cohere": return CohereProvider(model)
+def _provider_factory(name: str, model: str, cfg, **kwargs) -> Any:
+    if name == "openai":
+        return OpenAIProvider(model, cfg.base_url or None)
+    if name == "openai-reasoning":
+        effort = kwargs.get("effort") or "minimal"
+        return OpenAIReasoningProvider(model, cfg.base_url or None, effort=effort)
+    if name == "gemini":
+        return GeminiProvider(model)
+    if name == "anthropic":
+        return AnthropicProvider(model)
+    if name == "groq":
+        return GroqProvider(model)
+    if name == "xai":
+        return XAIProvider(model, cfg.base_url or None)
+    if name == "openrouter":
+        return OpenRouterProvider(model)
+    if name == "mistral":
+        return MistralProvider(model)
+    if name == "cohere":
+        return CohereProvider(model)
     raise ValueError(f"Unknown provider {name}")
 
 @app.command()
@@ -86,7 +96,8 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
         dataset: str = typer.Option("data/out/dataset.jsonl"),
         limit: int = typer.Option(50, help="Number of questions to run"),
         out_dir: str = typer.Option("data/out/runs"),
-        max_tokens: int = typer.Option(1024, help="Token budget for model output")):
+        max_tokens: int = typer.Option(0, help="Max output tokens (provider-specific). 0 = auto (8192 for OpenAI reasoning)"),
+        reasoning_effort: Optional[str] = typer.Option(None, help="OpenAI reasoning effort for GPT-5: minimal, low, medium, high")):
     # ensure env vars from .env are available for providers (OPENAI_API_KEY, GEMINI_API_KEY, ...)
     _load_env_file()
     cfg = load_config()
@@ -105,10 +116,36 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
         if not pv_cfg.enabled:
             warn(f"{provider_name} disabled in config")
             continue
-        pv = _provider_factory(provider_name, model, pv_cfg)
+
+        eff = None
+        if provider_name == "openai-reasoning":
+            if reasoning_effort:
+                eff = reasoning_effort.strip().lower()
+                if eff not in {"minimal", "low", "medium", "high"}:
+                    warn(f"Unknown reasoning effort '{reasoning_effort}', defaulting to 'minimal'")
+                    eff = "minimal"
+            else:
+                eff = "minimal"
+
+        pv = _provider_factory(provider_name, model, pv_cfg, effort=eff)
+        # Allow CLI to override reasoning effort for reasoning models post-instantiation
+        if provider_name == "openai-reasoning" and reasoning_effort:
+            eff_cli = reasoning_effort.strip().lower()
+            if eff_cli in {"minimal", "low", "medium", "high"}:
+                try:
+                    pv.effort = eff_cli
+                    info(f"Using reasoning_effort={eff_cli}")
+                except Exception:
+                    # If provider doesn't expose .effort, ignore gracefully
+                    warn(f"Could not set reasoning_effort on provider; using default '{getattr(pv, 'effort', 'minimal')}'")
+            else:
+                warn(f"Unknown reasoning_effort '{reasoning_effort}', using provider default '{getattr(pv, 'effort', 'minimal')}'")
         info(f"Running {provider_name}:{model} on {len(items)} items")
         recs: List[ModelResponse] = []
         for it in items:
+            # Log which question is being asked
+            q_preview = it.question_text if len(it.question_text) <= 120 else (it.question_text[:117] + "...")
+            info(f"Asking {provider_name}:{model} {it.qid} — {q_preview}")
             msg = pack_messages_for_question(it)
             if not pv.supports_images():
                 # remove images
@@ -122,7 +159,10 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
             max_retries = cfg.empty_answer_retries
             
             for attempt in range(max_retries + 1):  # +1 for initial attempt
-                text, ms = _safe_ask(pv, msg["messages"], max_tokens=max_tokens)
+                call_kwargs = {}
+                if isinstance(max_tokens, int) and max_tokens > 0:
+                    call_kwargs["max_tokens"] = max_tokens
+                text, ms = _safe_ask(pv, msg["messages"], **call_kwargs)
                 total_ms += ms
                 
                 # Check if answer is empty (only whitespace)
@@ -137,7 +177,12 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
             is_empty = not (text and text.strip())
             if is_empty:
                 warn(f"Final answer is empty for {provider_name}:{model} {it.qid} after {retry_count} retries")
+                info(f"Answered {it.qid}: empty")
+            else:
+                ans_len = len(text.strip()) if text else 0
+                info(f"Answered {it.qid}: non-empty ({ans_len} chars)")
             
+
             recs.append(ModelResponse(
                 provider=provider_name, 
                 model=model, 
@@ -158,7 +203,8 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
 def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
           runs_dir: str = typer.Option("data/out/runs"),
           grader: str = typer.Option("openai:gpt-5-mini", help="openai:gpt-5-mini or gemini:gemini-2.5-flash"),
-          out_dir: str = typer.Option("data/out/graded")):
+          out_dir: str = typer.Option("data/out/graded"),
+          label: Optional[str] = typer.Option(None, help="Optional label to append to model names in outputs, e.g., 'chat' or 'minimal'")):
     # ensure env vars from .env are available for graders
     _load_env_file()
     Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -183,13 +229,14 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
             is_empty = getattr(r, 'is_empty_answer', False) or not (r.answer and r.answer.strip())
 
             if is_empty:
-                empty_by_model.setdefault(r.model, []).append({
+                model_key = f"{r.model} [{label}]" if label else r.model
+                empty_by_model.setdefault(model_key, []).append({
                     "provider": r.provider,
-                    "model": r.model,
+                    "model": model_key,
                     "qid": r.qid,
                     "retry_attempts": getattr(r, 'retry_attempts', 0)
                 })
-                info(f"Skipping grading for empty answer: {r.provider}:{r.model} {r.qid}")
+                info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid}")
                 continue
 
             # Grade non-empty answers normally (concise progress)
@@ -201,9 +248,10 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
                 warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
                 continue
             info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f}")
-            gr = GradedResponse(provider=r.provider, model=r.model, qid=r.qid, answer=r.answer,
+            model_key = f"{r.model} [{label}]" if label else r.model
+            gr = GradedResponse(provider=r.provider, model=model_key, qid=r.qid, answer=r.answer,
                                 grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
-            rows_by_model.setdefault(r.model, []).append(gr.model_dump())
+            rows_by_model.setdefault(model_key, []).append(gr.model_dump())
 
     # Write per-model CSVs
     def _slug(s: str) -> str:
