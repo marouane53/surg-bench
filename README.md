@@ -220,6 +220,73 @@ Notes:
 - No breaking changes: existing workflows still work and can set `--max-tokens` as needed.
 - Budgets apply per provider; other providers are unchanged.
 
+### Claude 4 Models with Thinking Mode
+
+Test **Claude Sonnet 4** with thinking mode enabled:
+
+```bash
+python -m src.evalsys.cli run \
+  --models "anthropic:claude-sonnet-4-20250514" \
+  --dataset data/out/dataset.jsonl \
+  --limit 20 \
+  --max-tokens 20000 \
+  --anthropic-thinking-budget 16000 \
+  --out-dir "data/out/runs"
+```
+
+Test **Claude Opus 4** with thinking mode enabled:
+
+```bash
+python -m src.evalsys.cli run \
+  --models "anthropic:claude-opus-4-1-20250805" \
+  --dataset data/out/dataset.jsonl \
+  --limit 20 \
+  --max-tokens 20000 \
+  --anthropic-thinking-budget 16000 \
+  --out-dir "data/out/runs"
+```
+
+**Simple Python examples for direct API use:**
+
+Claude Sonnet 4 with thinking:
+```python
+import anthropic
+
+client = anthropic.Anthropic(api_key="my_api_key")
+
+message = client.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=20000,
+    messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+    thinking={"type": "enabled", "budget_tokens": 16000}
+    # Note: No temperature when thinking is enabled
+)
+print(message.content)
+```
+
+Claude Opus 4 with thinking:
+```python
+import anthropic
+
+client = anthropic.Anthropic(api_key="my_api_key")
+
+message = client.messages.create(
+    model="claude-opus-4-1-20250805",
+    max_tokens=20000,
+    messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}],
+    thinking={"type": "enabled", "budget_tokens": 16000}
+    # Note: No temperature when thinking is enabled
+)
+print(message.content)
+```
+
+**Key Notes for Claude 4 Thinking Mode:**
+- ✅ `budget_tokens` must be ≥1024 and < `max_tokens`
+- ❌ **Do NOT** send `temperature`, `top_p`, or `top_k` when thinking is enabled
+- 🔄 Streaming is automatically used for high token counts to avoid timeouts
+- 📝 Claude Sonnet 4: Released May 14, 2025 - Balanced performance/cost
+- 🧠 Claude Opus 4: Released August 5, 2025 - Best for complex reasoning
+
 ### Claude Sonnet 4 Non-Thinking Example
 
 Test **Claude Sonnet 4** (non-thinking mode) with high token output and grade with **Gemini 2.5 Flash**:
@@ -229,12 +296,12 @@ python -m src.evalsys.cli run \
   --models "anthropic:claude-sonnet-4-20250514" \
   --limit 20 \
   --max-tokens 20000 \
-  --out-dir "data/out/runs/sonnet4"
+  --out-dir "data/out/runs"
 
 python -m src.evalsys.cli grade \
-  --runs-dir "data/out/runs/sonnet4" \
+  --runs-dir "data/out/runs" \
   --grader "gemini:gemini-2.5-flash" \
-  --out-dir "data/out/grades/claude-sonnet-4-20250514-Non-Thinking" \
+  --out-dir "data/out/graded" \
   --label "claude-sonnet-4-20250514-Non-Thinking"
 ```
 
