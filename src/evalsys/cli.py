@@ -97,7 +97,8 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
         limit: int = typer.Option(50, help="Number of questions to run"),
         out_dir: str = typer.Option("data/out/runs"),
         max_tokens: int = typer.Option(0, help="Max output tokens (provider-specific). 0 = auto (8192 for OpenAI reasoning)"),
-        reasoning_effort: Optional[str] = typer.Option(None, help="OpenAI reasoning effort for GPT-5: minimal, low, medium, high")):
+        reasoning_effort: Optional[str] = typer.Option(None, help="OpenAI reasoning effort for GPT-5: minimal, low, medium, high"),
+        anthropic_thinking_budget: Optional[int] = typer.Option(None, help="Enable Anthropic 'thinking' with a budget in tokens (e.g., 16000)")):
     # ensure env vars from .env are available for providers (OPENAI_API_KEY, GEMINI_API_KEY, ...)
     _load_env_file()
     cfg = load_config()
@@ -128,6 +129,9 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                 eff = "minimal"
 
         pv = _provider_factory(provider_name, model, pv_cfg, effort=eff)
+        # Announce Anthropic thinking if requested
+        if provider_name == "anthropic" and anthropic_thinking_budget:
+            info(f"Enabling Anthropic thinking with budget_tokens={anthropic_thinking_budget}")
         # Allow CLI to override reasoning effort for reasoning models post-instantiation
         if provider_name == "openai-reasoning" and reasoning_effort:
             eff_cli = reasoning_effort.strip().lower()
@@ -162,6 +166,8 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                 call_kwargs = {}
                 if isinstance(max_tokens, int) and max_tokens > 0:
                     call_kwargs["max_tokens"] = max_tokens
+                if provider_name == "anthropic" and anthropic_thinking_budget:
+                    call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": int(anthropic_thinking_budget)}
                 text, ms = _safe_ask(pv, msg["messages"], **call_kwargs)
                 total_ms += ms
                 

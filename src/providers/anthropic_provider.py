@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os, time, base64
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 try:
     import anthropic
 except ImportError:
@@ -44,12 +44,39 @@ class AnthropicProvider(Provider):
     def ask(self, messages: List[Dict[str, Any]], **kwargs) -> Tuple[str, int]:
         start = time.time()
         blocks = self._to_blocks(messages)
-        resp = self.client.messages.create(
-            model=self.model,
-            max_tokens=kwargs.get("max_tokens", 500),
-            messages=[{"role": "user", "content": blocks}],
-            temperature=kwargs.get("temperature", 0.2),
-        )
+
+        # Determine output token budget with generous default
+        try:
+            max_tok = int(kwargs.get("max_tokens")) if kwargs.get("max_tokens") is not None else None
+        except Exception:
+            max_tok = None
+        if not isinstance(max_tok, int) or max_tok <= 0:
+            try:
+                max_tok = int(os.getenv("ANTHROPIC_MAX_TOKENS", "8192"))
+            except Exception:
+                max_tok = 8192
+
+        # Optional Anthropic "thinking" (reasoning) config
+        thinking_cfg: Optional[Dict[str, Any]] = kwargs.get("thinking")
+        if thinking_cfg is None:
+            # Allow enabling via env var, e.g., ANTHROPIC_THINKING_BUDGET_TOKENS=16000
+            env_budget = os.getenv("ANTHROPIC_THINKING_BUDGET_TOKENS")
+            if env_budget:
+                try:
+                    thinking_cfg = {"type": "enabled", "budget_tokens": int(env_budget)}
+                except Exception:
+                    thinking_cfg = None
+
+        params: Dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": max_tok,
+            "messages": [{"role": "user", "content": blocks}],
+            "temperature": kwargs.get("temperature", 0.2),
+        }
+        if thinking_cfg:
+            params["thinking"] = thinking_cfg
+
+        resp = self.client.messages.create(**params)
         # content is a list of items with text
         text = "".join([c.text for c in resp.content if getattr(c, "type", "") == "text"])
         return text, int((time.time()-start)*1000)

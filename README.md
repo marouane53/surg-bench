@@ -81,14 +81,44 @@ This creates per-model CSVs in `data/out/graded/` and a unified report:
 - `empty_answers__<model>.csv` for empty answers per model (if any)
 - `report.html` combining all per-model results
 
-### Regenerate Report Only
-Rebuild the HTML report from existing graded outputs (no re-grading). Point to the graded directory with per-model CSVs:
+## Reporting
+
+### Generate Report from Existing CSV Files
+Rebuild the HTML report from existing graded CSV outputs without re-running models or grading:
+
+#### Using the CLI (requires Python 3.10+)
 ```bash
 python -m src.evalsys.cli report \
   --scores data/out/graded \
-  --dataset data/out/dataset.jsonl
+  --dataset data/out/dataset.jsonl \
+  --out-html data/out/graded/report.html
 ```
-You can also pass explicit files or an explicit `--empty-answers` path (file or directory) if needed.
+
+#### Using the Standalone Script (works with any Python version)
+If you encounter module import issues, use the provided standalone script:
+
+```bash
+python generate_report.py
+```
+
+This script:
+- Automatically finds all `scores__*.csv` files in `data/out/graded/`
+- Includes empty answer data from `empty_answers__*.csv` files
+- Generates `data/out/graded/report.html` with comprehensive analytics
+- Works with any Python version (bypasses package installation requirements)
+
+The generated report includes:
+- **Model Comparison**: Side-by-side performance metrics
+- **Score Distribution**: Histograms and statistical summaries  
+- **Question Analysis**: Per-question breakdowns with justifications
+- **Empty Answer Tracking**: Models that failed to respond
+- **Interactive Charts**: Sortable tables and visual analytics
+
+### Report Options
+- `--scores`: Path to CSV file or directory containing `scores__*.csv` files
+- `--dataset`: Path to `dataset.jsonl` file (for question context)
+- `--empty-answers`: Optional path to empty answers CSV or directory
+- `--out-html`: Output HTML file path (defaults to same directory as scores)
 
 ## Quick Testing Example
 
@@ -128,7 +158,7 @@ python -m src.evalsys.cli run --models "openai:gpt-5-chat" --limit 50
 python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort minimal --limit 50
 python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort low --limit 50
 python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort medium --limit 50
-python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort high --limit 50
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effort high --limit 20
 
 # 2) Grade them ALL into the SAME default folder data/out/graded
 #    Use --label so each variant appears as its own model in one combined report.
@@ -147,6 +177,66 @@ This comprehensive workflow:
 1. Tests both standard chat models and reasoning models at all effort levels
 2. Uses labels to distinguish each reasoning effort level in the final report
 3. Generates a unified comparison report showing performance differences across reasoning strategies
+
+## High Output-Tokens and Reasoning Budget
+
+- OpenRouter and Anthropic default to 8192 output tokens if not specified.
+- Override with `--max-tokens` on the CLI or provider-specific env vars.
+- Anthropic supports an optional reasoning budget ("thinking") via CLI or env var.
+
+### OpenRouter (image-capable) benchmark at 20k tokens
+```bash
+# Option A: Set default via env var
+export OPENROUTER_MAX_TOKENS=20000
+
+# Option B: Pass an explicit override (takes precedence)
+python -m src.evalsys.cli run \
+  --models "openrouter:openai/gpt-4o,openrouter:anthropic/claude-3.7-sonnet" \
+  --dataset data/out/dataset.jsonl \
+  --limit 50 \
+  --max-tokens 20000
+```
+
+### Anthropic Sonnet and Opus with 20k output / 16k reasoning
+```bash
+# Option A: CLI flags
+python -m src.evalsys.cli run \
+  --models "anthropic:claude-3-5-sonnet-latest,anthropic:claude-3-opus-20240229" \
+  --dataset data/out/dataset.jsonl \
+  --limit 50 \
+  --max-tokens 20000 \
+  --anthropic-thinking-budget 16000
+
+# Option B: Environment variables
+export ANTHROPIC_MAX_TOKENS=20000
+export ANTHROPIC_THINKING_BUDGET_TOKENS=16000
+python -m src.evalsys.cli run \
+  --models "anthropic:claude-3-5-sonnet-latest,anthropic:claude-3-opus-20240229" \
+  --dataset data/out/dataset.jsonl \
+  --limit 50
+```
+
+Notes:
+- No breaking changes: existing workflows still work and can set `--max-tokens` as needed.
+- Budgets apply per provider; other providers are unchanged.
+
+### Claude Sonnet 4 Non-Thinking Example
+
+Test **Claude Sonnet 4** (non-thinking mode) with high token output and grade with **Gemini 2.5 Flash**:
+
+```bash
+python -m src.evalsys.cli run \
+  --models "anthropic:claude-sonnet-4-20250514" \
+  --limit 20 \
+  --max-tokens 20000 \
+  --out-dir "data/out/runs/sonnet4"
+
+python -m src.evalsys.cli grade \
+  --runs-dir "data/out/runs/sonnet4" \
+  --grader "gemini:gemini-2.5-flash" \
+  --out-dir "data/out/grades/claude-sonnet-4-20250514-Non-Thinking" \
+  --label "claude-sonnet-4-20250514-Non-Thinking"
+```
 
 ## Provider Configuration
 
@@ -182,6 +272,12 @@ Set these environment variables in your `.env` file (the CLI now auto-loads `.en
 - `OPENROUTER_API_KEY` - For OpenRouter
 - `MISTRAL_API_KEY` - For Mistral models (optional)
 - `COHERE_API_KEY` - For Cohere models (optional)
+
+Optional provider-specific token controls:
+
+- `OPENROUTER_MAX_TOKENS` - Default output-token cap for OpenRouter (e.g., 8192, 20000)
+- `ANTHROPIC_MAX_TOKENS` - Default output-token cap for Anthropic (e.g., 8192, 20000)
+- `ANTHROPIC_THINKING_BUDGET_TOKENS` - Enable Anthropic reasoning and set budget (e.g., 16000)
 
 ## Testing
 
