@@ -19,17 +19,16 @@ class AnthropicProvider(Provider):
         return True
 
     def _to_blocks(self, messages: List[Dict[str, Any]]):
-        sys = ""
+        system_text = ""
         for m in messages:
             if m["role"] == "system":
-                sys = m["content"]
+                system_text = str(m["content"] or "")
         user = next((m for m in messages if m["role"] == "user"), None)
         blocks = []
         if isinstance(user["content"], list):
             for part in user["content"]:
                 if part.get("type") == "text":
-                    txt = (sys + "\n\n" if sys else "") + part["text"]
-                    sys = ""
+                    txt = part["text"]
                     blocks.append({"type": "text", "text": txt})
                 elif part.get("type") == "image_url":
                     url = part["image_url"]["url"]
@@ -37,13 +36,13 @@ class AnthropicProvider(Provider):
                     mime = header.split(";")[0].split(":")[1]
                     blocks.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}})
         else:
-            txt = (sys + "\n\n" if sys else "") + str(user["content"])
+            txt = str(user["content"])
             blocks.append({"type": "text", "text": txt})
-        return blocks
+        return blocks, system_text
 
     def ask(self, messages: List[Dict[str, Any]], **kwargs) -> Tuple[str, int]:
         start = time.time()
-        blocks = self._to_blocks(messages)
+        blocks, system_text = self._to_blocks(messages)
 
         # Determine output token budget with generous default
         try:
@@ -71,12 +70,41 @@ class AnthropicProvider(Provider):
             "model": self.model,
             "max_tokens": max_tok,
             "messages": [{"role": "user", "content": blocks}],
-            "temperature": kwargs.get("temperature", 0.2),
         }
-        if thinking_cfg:
-            params["thinking"] = thinking_cfg
+        if system_text:
+            params["system"] = system_text
 
-        resp = self.client.messages.create(**params)
-        # content is a list of items with text
-        text = "".join([c.text for c in resp.content if getattr(c, "type", "") == "text"])
+        if thinking_cfg:
+            # Enforce Anthropic constraints: budget_tokens >= 1024 and < max_tokens
+            try:
+                bt = int(thinking_cfg.get("budget_tokens", 0))
+            except Exception:
+                bt = 0
+            if bt < 1024:
+                bt = 1024
+            if bt >= max_tok:
+                # Keep 1024 tokens for visible text by default
+                bt = max(1024, max_tok - 1024)
+            params["thinking"] = {"type": "enabled", "budget_tokens": bt}
+            # IMPORTANT: Thinking is incompatible with temperature/top_p/top_k
+            # (Claude 4 / Bedrock docs). Do NOT send temperature when thinking is on.
+        else:
+            params["temperature"] = kwargs.get("temperature", 0.2)
+
+        # Use streaming for high token counts or thinking mode to avoid 10-minute timeout
+        use_streaming = max_tok > 8192 or thinking_cfg is not None
+        
+        if use_streaming:
+            # Don't pass 'stream' parameter to stream() method - it's already streaming
+            text_chunks = []
+            with self.client.messages.stream(**params) as stream:
+                for chunk in stream:
+                    if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'text'):
+                        text_chunks.append(chunk.delta.text)
+            text = "".join(text_chunks)
+        else:
+            resp = self.client.messages.create(**params)
+            # content is a list of items with text
+            text = "".join([c.text for c in resp.content if getattr(c, "type", "") == "text"])
+        
         return text, int((time.time()-start)*1000)
