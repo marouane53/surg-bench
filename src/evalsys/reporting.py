@@ -1,7 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import pandas as pd
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 from jinja2 import Template
 import json, ast, os, re
 
@@ -11,7 +11,7 @@ HTML = """
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AI Eval Report</title>
+  <title>Surgical Benchmark</title>
   <style>
     /* Light theme defaults */
     :root {
@@ -87,12 +87,14 @@ HTML = """
     .toggle { margin-left:auto; }
 
     a, button { color: inherit; }
+    /* Hide rejected QID details when excluding rejections */
+    .hide-rejects details.qd.rejected { display: none; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>AI Evaluation Report</h1>
+      <h1>Surgical Benchmark</h1>
       <div class="actions">
         <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: {{ grader_name }}{% if total_empty > 0 %} · Empty answers: {{ total_empty }}{% endif %}</div>
         <button class="btn" id="themeToggle" type="button">Toggle Theme</button>
@@ -103,11 +105,11 @@ HTML = """
     <section class="card" id="chartCard">
       <div class="hd">
         <div class="controls">
-          <strong id="chartTitle">Average Scores (ranked)</strong>
+          <strong id="chartTitle">All Questions Accounted (ranked)</strong>
           <div style="margin-left:12px; display:flex; gap:6px; align-items:center;">
-            <button class="btn" id="mode-score" type="button" title="Exclude rejections">No rejects</button>
-            <button class="btn" id="mode-zeroed" type="button" title="Count rejections as 0">Zeroed rejects</button>
-            <button class="btn" id="mode-reject" type="button" title="Show rejection rate">Rejections</button>
+            <button class="btn" id="mode-zeroed" type="button" title="Counts rejections as 0">All questions (rejects = 0)</button>
+            <button class="btn" id="mode-score" type="button" title="Exclude rejected answers">Exclude rejections</button>
+            <button class="btn" id="mode-reject" type="button" title="Show rejection percentage">Rejection percentage</button>
           </div>
         </div>
         <div class="muted" id="chartHint">Hover bars for details</div>
@@ -150,11 +152,15 @@ HTML = """
         <div class="bd">
           {% for r in rows %}
             {% set bucket = 'score-ok' if r.score >= 0.7 else ('score-warn' if r.score >= 0.4 else 'score-bad') %}
-            <details class="qd">
+            <details class="qd {{ 'rejected' if r.rejected else '' }}">
               <summary>
                 <span class="qid">{{ r.qid }}</span>
                 <span class="muted">on page {{ r.page_start }}–{{ r.page_end }}</span>
-                <span class="scorechip {{ bucket }}">Score: {{ "%.3f"|format(r.score) }}</span>
+                {% if r.rejected %}
+                  <span class="scorechip score-bad">Rejected</span>
+                {% else %}
+                  <span class="scorechip {{ bucket }}">Score: {{ "%.3f"|format(r.score) }}</span>
+                {% endif %}
                 {% if r.harmful %}<span class="scorechip score-bad">Harmful</span>{% endif %}
                 {% if r.images and r.images|length > 0 %}
                   <button class="btn toggle" type="button" data-target="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
@@ -162,8 +168,12 @@ HTML = """
               </summary>
               <div class="question"><div class="k">Question</div><div class="mono">{{ r.question_text }}</div></div>
               {% if r.answer_text %}<div class="answer"><div class="k">Reference Answer</div><div class="mono">{{ r.answer_text }}</div></div>{% endif %}
-              <div class="answer"><div class="k">Model Answer</div><div class="mono">{{ r.answer }}</div></div>
-              <div class="just"><div class="k">Justification</div><div class="mono">{{ r.justification }}</div></div>
+              {% if r.rejected %}
+                <div class="answer"><div class="k">Model Answer</div><div class="mono">∅ No answer (rejected)</div></div>
+              {% else %}
+                <div class="answer"><div class="k">Model Answer</div><div class="mono">{{ r.answer }}</div></div>
+                <div class="just"><div class="k">Justification</div><div class="mono">{{ r.justification }}</div></div>
+              {% endif %}
               {% if r.missed and r.missed|length>0 %}
                 <div class="kv"><div class="k">Missed points</div><div>
                   <ul>
@@ -201,7 +211,7 @@ HTML = """
       canvas.height = canvas.clientHeight * DPR;
       ctx.scale(DPR, DPR);
 
-      const PADDING = {l: 140, r: 40, t: 20, b: 30};
+      const PADDING = {l: 180, r: 40, t: 20, b: 30};
       const W = canvas.clientWidth, H = canvas.clientHeight;
       const innerW = W - PADDING.l - PADDING.r;
       const innerH = H - PADDING.t - PADDING.b;
@@ -253,13 +263,18 @@ HTML = """
           const b = bars[i];
           const y = offsetY + i*(rowH+gap);
           const w = (b.avg) * innerW * progress;
-          // label
-          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text');
-          ctx.fillText(b.model, 12, y + rowH*0.7);
-          // bar
+          // draw bar first
           const color = colorForIdx(i);
           ctx.fillStyle = color;
           ctx.fillRect(PADDING.l, y, Math.max(2, w), rowH);
+          // model label in left gutter, clipped to avoid overlap
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, y, PADDING.l - 8, rowH);
+          ctx.clip();
+          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text');
+          ctx.fillText(b.model, 12, y + rowH*0.7, PADDING.l - 24);
+          ctx.restore();
           // value chip
           const chipW = 60;
           ctx.fillStyle = '#0008';
@@ -318,16 +333,32 @@ HTML = """
       }
       function setMode(newMode) {
         mode = newMode;
-        if (mode === 'reject') { bars = barsReject; titleEl.textContent = 'Rejection Rate (ranked)'; hintEl.textContent = 'Bigger is worse — hover for details'; setActive('mode-reject'); }
-        else if (mode === 'zeroed') { bars = barsZeroed; titleEl.textContent = 'Average Scores (rejections as 0)'; hintEl.textContent = 'Counts rejections as 0 — hover for details'; setActive('mode-zeroed'); }
-        else { bars = barsScore; titleEl.textContent = 'Average Scores (ranked)'; hintEl.textContent = 'Excludes rejections — hover for details'; setActive('mode-score'); }
+        if (mode === 'reject') {
+          bars = barsReject;
+          titleEl.textContent = 'Rejection Percentage (ranked)';
+          hintEl.textContent = 'Higher is worse — hover for details';
+          setActive('mode-reject');
+          document.body.classList.remove('hide-rejects');
+        } else if (mode === 'zeroed') {
+          bars = barsZeroed;
+          titleEl.textContent = 'All Questions Accounted (ranked)';
+          hintEl.textContent = 'Counts rejections as 0 — hover for details';
+          setActive('mode-zeroed');
+          document.body.classList.remove('hide-rejects');
+        } else {
+          bars = barsScore;
+          titleEl.textContent = 'Answered Only (ranked)';
+          hintEl.textContent = 'Excludes rejections — hover for details';
+          setActive('mode-score');
+          document.body.classList.add('hide-rejects');
+        }
         render(1);
       }
       document.getElementById('mode-score')?.addEventListener('click', () => setMode('score'));
       document.getElementById('mode-zeroed')?.addEventListener('click', () => setMode('zeroed'));
       document.getElementById('mode-reject')?.addEventListener('click', () => setMode('reject'));
-      // Initialize default
-      setMode('score');
+      // Initialize default (All questions, rejects as 0)
+      setMode('zeroed');
 
       // Images lazy-toggle with details-open and fallback path
       document.addEventListener('click', (e) => {
@@ -418,6 +449,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
 
     # Load empty answer statistics if available
     empty_stats = {}  # model -> count
+    empty_qids_by_model: Dict[str, Set[str]] = {}
     provider_for_model: Dict[str, str] = {}
     total_empty = 0
     if empty_stats_path:
@@ -441,6 +473,9 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
                     model = str(row.get("model", ""))
                     provider = str(row.get("provider", ""))
                     empty_stats[model] = empty_stats.get(model, 0) + 1
+                    qid_val = str(row.get("qid", "")).strip()
+                    if qid_val:
+                        empty_qids_by_model.setdefault(model, set()).add(qid_val)
                     if model and provider and model not in provider_for_model:
                         provider_for_model[model] = provider
                     total_empty += 1
@@ -497,6 +532,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             "page_end": int(qi.get("page_end", 0) or 0),
             "images": fixed_imgs,
             "model_slug": model_slug,
+            "rejected": False,
         }
         rows_by_model.setdefault(model, []).append(rec)
         # aggregate
@@ -593,6 +629,52 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         "bars_zeroed": bars_zeroed,
         "bars_reject": bars_reject,
     })
+
+    # Add rejected questions to per-model rows so the main view lists all questions.
+    # These entries are tagged as rejected and hidden when excluding rejections.
+    if empty_qids_by_model:
+        for m in models:
+            rej_qs = empty_qids_by_model.get(m, set())
+            if not rej_qs:
+                continue
+            answered_qs = {r["qid"] for r in rows_by_model.get(m, [])}
+            provider = provider_by_model.get(m, provider_for_model.get(m, ""))
+            for qid in sorted(rej_qs - answered_qs, key=_qid_key):
+                qi = qmap.get(qid, {})
+                imgs = [str(x) for x in qi.get("images", [])]
+                fixed_imgs: List[Dict[str, str]] = []
+                for p in imgs:
+                    base = os.path.basename(p)
+                    relp = str(Path(rel_images_base) / base)
+                    absp = "/out/images/" + base
+                    fixed_imgs.append({"rel": relp, "abs": absp})
+                model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", m).strip("_") or "model"
+                rec = {
+                    "provider": provider,
+                    "model": m,
+                    "qid": qid,
+                    "score": 0.0,
+                    "justification": "",
+                    "answer": "",
+                    "grader": "",
+                    "harmful": False,
+                    "missed": [],
+                    "question_text": str(qi.get("question_text", "")),
+                    "answer_text": str(qi.get("answer_text", "")),
+                    "page_start": int(qi.get("page_start", 0) or 0),
+                    "page_end": int(qi.get("page_end", 0) or 0),
+                    "images": fixed_imgs,
+                    "model_slug": model_slug,
+                    "rejected": True,
+                }
+                rows_by_model.setdefault(m, []).append(rec)
+        # Resort rows to keep QIDs ordered
+        for m in rows_by_model:
+            rows_by_model[m].sort(key=lambda r: _qid_key(r["qid"]))
+        # Ensure averages map has entries for any models added only via rejections
+        for m in rows_by_model.keys():
+            if m not in model_avgs:
+                model_avgs[m] = 0.0
 
     # Determine grader name (if consistent)
     grader_name = ""

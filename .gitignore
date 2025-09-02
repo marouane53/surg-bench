@@ -218,3 +218,4 @@ logs/
 # Backup files
 *.bak
 *.backup
+data/
