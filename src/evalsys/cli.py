@@ -98,7 +98,8 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
         out_dir: str = typer.Option("data/out/runs"),
         max_tokens: int = typer.Option(0, help="Max output tokens (provider-specific). 0 = auto (8192 for OpenAI reasoning)"),
         reasoning_effort: Optional[str] = typer.Option(None, help="OpenAI reasoning effort for GPT-5: minimal, low, medium, high"),
-        anthropic_thinking_budget: Optional[int] = typer.Option(None, help="Enable Anthropic 'thinking' with a budget in tokens (e.g., 16000)")):
+        anthropic_thinking_budget: Optional[int] = typer.Option(None, help="Enable Anthropic 'thinking' with a budget in tokens (e.g., 16000)"),
+        resume: bool = typer.Option(True, help="Resume from existing runs: skip QIDs already answered and append new results")):
     # ensure env vars from .env are available for providers (OPENAI_API_KEY, GEMINI_API_KEY, ...)
     _load_env_file()
     cfg = load_config()
@@ -144,9 +145,30 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                     warn(f"Could not set reasoning_effort on provider; using default '{getattr(pv, 'effort', 'minimal')}'")
             else:
                 warn(f"Unknown reasoning_effort '{reasoning_effort}', using provider default '{getattr(pv, 'effort', 'minimal')}'")
+        # Determine output path and existing completed QIDs if resuming
+        out_path = Path(out_dir) / f"{provider_name}__{model.replace('/','_')}.jsonl"
+        completed_qids = set()
+        if resume and out_path.exists():
+            try:
+                for line in out_path.read_text(encoding="utf-8").splitlines():
+                    try:
+                        prev = ModelResponse.model_validate_json(line)
+                        if prev.qid:
+                            completed_qids.add(prev.qid)
+                    except Exception:
+                        continue
+                if completed_qids:
+                    info(f"Resuming {provider_name}:{model} — found {len(completed_qids)} completed QIDs")
+            except Exception:
+                warn(f"Could not read existing run file {out_path}; starting fresh")
+
         info(f"Running {provider_name}:{model} on {len(items)} items")
         recs: List[ModelResponse] = []
         for it in items:
+            if resume and it.qid in completed_qids:
+                # Skip already answered question
+                info(f"Skipping {it.qid} (already answered)")
+                continue
             # Log which question is being asked
             q_preview = it.question_text if len(it.question_text) <= 120 else (it.question_text[:117] + "...")
             info(f"Asking {provider_name}:{model} {it.qid} — {q_preview}")
@@ -199,18 +221,23 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                 retry_attempts=retry_count,
                 is_empty_answer=is_empty
             ))
-        path = Path(out_dir) / f"{provider_name}__{model.replace('/','_')}.jsonl"
-        with path.open("w", encoding="utf-8") as f:
+        # Write/append
+        mode = "a" if (resume and out_path.exists()) else "w"
+        with out_path.open(mode, encoding="utf-8") as f:
             for r in recs:
                 f.write(r.model_dump_json() + "\n")
-        info(f"Wrote {path}")
+        if recs:
+            info(f"Wrote {len(recs)} records to {out_path} ({'append' if mode=='a' else 'new file'})")
+        else:
+            info(f"No new records to write for {provider_name}:{model}")
 
 @app.command()
 def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
           runs_dir: str = typer.Option("data/out/runs"),
           grader: str = typer.Option("openai:gpt-5-mini", help="openai:gpt-5-mini or gemini:gemini-2.5-flash"),
           out_dir: str = typer.Option("data/out/graded"),
-          label: Optional[str] = typer.Option(None, help="Optional label to append to model names in outputs, e.g., 'chat' or 'minimal'")):
+          label: Optional[str] = typer.Option(None, help="Optional label to append to model names in outputs, e.g., 'chat' or 'minimal'"),
+          resume: bool = typer.Option(True, help="Resume grading: skip QIDs already graded or recorded as empty and append new results")):
     # ensure env vars from .env are available for graders
     _load_env_file()
     Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -221,7 +248,32 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
     else:
         g = GeminiGrader(model=grader.split(":",1)[1])
 
-    # Accumulate per-model rows
+    # Preload existing graded QIDs and empty QIDs if resuming
+    existing_graded: Dict[str, set] = {}
+    existing_empty: Dict[str, set] = {}
+    if resume:
+        for fp in Path(out_dir).glob("scores__*.csv"):
+            try:
+                df_prev = pd.read_csv(fp)
+            except Exception:
+                continue
+            for _, row in df_prev.iterrows():
+                m = str(row.get("model", ""))
+                q = str(row.get("qid", ""))
+                if m and q:
+                    existing_graded.setdefault(m, set()).add(q)
+        for fp in Path(out_dir).glob("empty_answers__*.csv"):
+            try:
+                df_prev = pd.read_csv(fp)
+            except Exception:
+                continue
+            for _, row in df_prev.iterrows():
+                m = str(row.get("model", ""))
+                q = str(row.get("qid", ""))
+                if m and q:
+                    existing_empty.setdefault(m, set()).add(q)
+
+    # Accumulate per-model rows (new work only)
     rows_by_model: Dict[str, list] = {}
     empty_by_model: Dict[str, list] = {}
     for path in Path(runs_dir).glob("*.jsonl"):
@@ -236,6 +288,10 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
             if is_empty:
                 model_key = f"{r.model} [{label}]" if label else r.model
+                # Skip if already recorded as empty
+                if resume and r.qid in existing_empty.get(model_key, set()):
+                    info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid}")
+                    continue
                 empty_by_model.setdefault(model_key, []).append({
                     "provider": r.provider,
                     "model": model_key,
@@ -247,6 +303,11 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
             # Grade non-empty answers normally (concise progress)
             info(f"Grading {r.provider}:{r.model} {r.qid}")
+            # Skip if already graded
+            model_key = f"{r.model} [{label}]" if label else r.model
+            if resume and r.qid in existing_graded.get(model_key, set()):
+                info(f"Already graded {r.provider}:{model_key} {r.qid}; skipping")
+                continue
             prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
             try:
                 score, just, missed, harmful = g.grade(prompt)
@@ -254,7 +315,6 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
                 warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
                 continue
             info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f}")
-            model_key = f"{r.model} [{label}]" if label else r.model
             gr = GradedResponse(provider=r.provider, model=model_key, qid=r.qid, answer=r.answer,
                                 grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
             rows_by_model.setdefault(model_key, []).append(gr.model_dump())
@@ -266,19 +326,38 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
     total_rows = 0
     total_empties = 0
     for model, rows in rows_by_model.items():
-        df = pd.DataFrame(rows)
         csv_path = Path(out_dir) / f"scores__{_slug(model)}.csv"
-        df.to_csv(csv_path, index=False)
-        total_rows += len(rows)
-        info(f"Wrote {csv_path}")
+        df_new = pd.DataFrame(rows)
+        if resume and csv_path.exists():
+            try:
+                df_prev = pd.read_csv(csv_path)
+                # Merge and drop duplicates by qid (keep previous first)
+                df_all = pd.concat([df_prev, df_new], ignore_index=True)
+                df_all = df_all.drop_duplicates(subset=["qid"], keep="first")
+            except Exception:
+                df_all = df_new
+        else:
+            df_all = df_new
+        df_all.to_csv(csv_path, index=False)
+        total_rows += len(df_new)
+        info(f"Wrote {csv_path} ({len(df_new)} new rows)")
 
     for model, rows in empty_by_model.items():
         if rows:
-            empty_df = pd.DataFrame(rows)
             empty_path = Path(out_dir) / f"empty_answers__{_slug(model)}.csv"
-            empty_df.to_csv(empty_path, index=False)
+            empty_df_new = pd.DataFrame(rows)
+            if resume and empty_path.exists():
+                try:
+                    empty_prev = pd.read_csv(empty_path)
+                    empty_all = pd.concat([empty_prev, empty_df_new], ignore_index=True)
+                    empty_all = empty_all.drop_duplicates(subset=["qid"], keep="first")
+                except Exception:
+                    empty_all = empty_df_new
+            else:
+                empty_all = empty_df_new
+            empty_all.to_csv(empty_path, index=False)
             total_empties += len(rows)
-            info(f"Wrote empty answer stats to {empty_path}")
+            info(f"Wrote empty answer stats to {empty_path} ({len(rows)} new)")
 
     if total_rows + total_empties > 0:
         info(f"Empty answers: {total_empties}/{total_rows + total_empties} ({(total_empties/(total_rows+total_empties))*100:.1f}%)")

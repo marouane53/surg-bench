@@ -1,6 +1,18 @@
 # AI Surgical Evaluation System
 
-A comprehensive evaluator that ingests surgical PDF documents, extracts Q&A with images into structured datasets, runs questions across multiple AI providers, and grades responses using GPT-5 Mini and Gemini 2.5 Flash.
+A comprehensive benchmark that extracts surgical Q&A with images from PDF documents, runs questions across multiple AI providers, and grades responses using LLM-based evaluators.
+
+## Data Source & Attribution
+
+This benchmark uses questions extracted from **"Surgical Exam Cases"** by **Charles Tan**, Adjunct Assistant Professor, Department of Surgery, Yong Loo Lin School of Medicine, National University of Singapore.
+
+### Why This Book?
+
+We selected this textbook because it was **published in 2025**, before most current AI models were trained. This ensures the evaluation tests genuine medical reasoning capabilities rather than memorized content, providing a fair and uncontaminated assessment of AI performance on contemporary surgical knowledge.
+
+### Running the Benchmark
+
+**To run this evaluation, you must purchase the book.** The PDF (`data/surgical.pdf`) is not included in this repository. You can obtain the book from major medical publishers or academic bookstores. Once acquired, place the PDF in the `data/` directory to begin extraction and evaluation.
 
 ## Features
 
@@ -8,12 +20,13 @@ A comprehensive evaluator that ingests surgical PDF documents, extracts Q&A with
 - **Multi-Provider Support**: OpenAI, Gemini, Anthropic, Groq, xAI, OpenRouter (Mistral & Cohere optional)
 - **Switchable Graders**: GPT-5 Mini or Gemini 2.5 Flash for consistent evaluation
 - **Comprehensive Reporting**: CSV output and HTML reports with scoring analytics
-  - Chart modes: exclude rejections, count rejections as 0, or show rejection rate (bigger is worse)
+- **Resume Support**: Stop and continue runs or grading without losing progress
 
 ## Requirements
 
 - Python 3.9+ (Python 3.10+ recommended for all optional providers)
 - API keys for desired providers
+- The "Surgical Exam Cases" textbook PDF (not included - must be purchased)
 
 ## Project Structure
 
@@ -120,30 +133,46 @@ The generated report includes:
 - `--empty-answers`: Optional path to empty answers CSV or directory
 - `--out-html`: Output HTML file path (defaults to same directory as scores)
 
+## Resume Runs and Grading (Stop/Continue)
+
+You can pause and resume both model runs and grading without losing progress. The CLI skips QIDs already completed and appends only new results, then refreshes the report.
+
+- `run --resume`: Skips QIDs already present in `data/out/runs/<provider>__<model>.jsonl` and appends new answers.
+- `grade --resume`: Skips QIDs already graded in `data/out/graded/scores__<model>.csv` or recorded as empty in `empty_answers__<model>.csv`, appends new rows, and regenerates `report.html`.
+
+Examples:
+
+```bash
+# Start a run
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --limit 200
+
+# Stop the process (Ctrl+C) and resume later; picks up remaining QIDs
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --limit 200 --resume
+
+# Grade incrementally; only new answers are graded, report is updated each time
+python -m src.evalsys.cli grade --runs-dir data/out/runs --grader "openai:gpt-5-mini" --resume
+```
+
+Notes:
+- `--resume` is enabled by default for both `run` and `grade`.
+- `grade` always regenerates `data/out/graded/report.html` so your report stays current after each incremental run.
+
 ## Quick Testing Example
 
-To quickly test multiple models and generate a comparative report with just 5 questions:
+Test multiple models and generate a comparative report with just 5 questions:
 
 ```bash
 # Step 1: Extract Q&A from PDF (if not done already)
 python -m src.evalsys.cli ingest --pdf data/surgical.pdf
 
-# Step 2: Run multiple models at once (Gemini 2.5 Flash, Pro, and GPT-5)
+# Step 2: Run multiple models at once
 python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash,gemini:gemini-2.5-pro,openai-reasoning:gpt-5" --limit 5
 
-# Step 3: Grade all responses using Gemini 2.5 Flash
+# Step 3: Grade all responses
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 
-# View results
-# - CSV: data/out/graded/scores.csv  
-# - HTML: data/out/graded/report.html
+# View results in: data/out/graded/report.html
 ```
-
-This will:
-1. Run 3 different models on the first 5 questions
-2. Generate comparative responses in `data/out/runs/`
-3. Grade all responses using Gemini 2.5 Flash as the evaluator
-4. Create an HTML report grouped by model with full justifications
 
 ## Advanced Reasoning Model Comparison Example
 
@@ -393,40 +422,6 @@ Process larger datasets:
 ```bash
 python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --limit 200
 ```
-
-### Gemini Testing Examples
-
-Test **Gemini 2.5 Flash** as both model and grader on 5 samples:
-```bash
-python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
-```
-
-Test **Gemini 2.5 Pro** as model with **Gemini 2.5 Flash** as grader on 5 samples:
-```bash
-python -m src.evalsys.cli run --models "gemini:gemini-2.5-pro" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
-```
-
-Test **both Gemini models** together with **Flash as grader**:
-```bash
-python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash,gemini:gemini-2.5-pro" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
-```
-
-Test **GPT-5** as model with **Gemini 2.5 Flash** as grader on 5 samples:
-```bash
-python -m src.evalsys.cli run --models "openai:gpt-5" --limit 5 && python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
-```
-
-
-source .venv/bin/activate && python -m src.evalsys.cli grade --runs-dir "data/out/runs" --grader "gemini:gemini-2.5-flash" --label "high"
-
-
-
-
-
-
-
-
-
 
 ## Security Notes
 
