@@ -279,6 +279,7 @@ HTML = """
                     <span id="comparisonValue">0.20</span>
                   </label>
                   <input type="range" id="comparisonSlider" min="0" max="1" step="0.01" value="0.20">
+                  <button class="btn" type="button" id="comparisonSortToggle">Sort by model</button>
                 </div>
                 <div id="comparisonResults" class="comparison-results"></div>
               </div>
@@ -398,6 +399,8 @@ HTML = """
       const comparisonSlider = document.getElementById('comparisonSlider');
       const comparisonValue = document.getElementById('comparisonValue');
       const comparisonResults = document.getElementById('comparisonResults');
+      const comparisonSortToggle = document.getElementById('comparisonSortToggle');
+      let comparisonSortMode = 'qid';
 
       const colorForIdx = (i) => {
         const hue = (i * 137.508) % 360;
@@ -419,6 +422,13 @@ HTML = """
           .toString()
           .replace(/[^a-zA-Z0-9_-]+/g, '_')
       );
+
+      const qidKey = (qid) => {
+        if (!qid) return [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
+        const match = /Q(\d+)\.(\d+)/i.exec(qid);
+        if (!match) return [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
+        return [parseInt(match[1], 10) || 0, parseInt(match[2], 10) || 0];
+      };
 
       function resolveGrader(id) {
         if (id && GRADERS[id]) return id;
@@ -811,7 +821,25 @@ HTML = """
             comparisonResults.innerHTML = '<div class="comp-empty">No grader pair selected.</div>';
             return;
           }
-          const entries = pair.entries.filter((entry) => Number(entry.diff || 0) >= (Number.isNaN(threshold) ? 0 : threshold));
+          const thresholdValue = Number.isNaN(threshold) ? 0 : threshold;
+          const entries = pair.entries
+            .filter((entry) => Number(entry.diff || 0) >= thresholdValue)
+            .sort((a, b) => {
+              if (comparisonSortMode === 'model') {
+                const mCompare = (a.model || '').localeCompare(b.model || '');
+                if (mCompare !== 0) return mCompare;
+                const [am, aq] = qidKey(a.qid);
+                const [bm, bq] = qidKey(b.qid);
+                if (am !== bm) return am - bm;
+                return aq - bq;
+              }
+              const [am, aq] = qidKey(a.qid);
+              const [bm, bq] = qidKey(b.qid);
+              if (am !== bm) return am - bm;
+              if (aq !== bq) return aq - bq;
+              if (a.model && b.model) return a.model.localeCompare(b.model);
+              return 0;
+            });
           if (!entries.length) {
             comparisonResults.innerHTML = '<div class="comp-empty">No questions within this score gap.</div>';
             return;
@@ -827,6 +855,16 @@ HTML = """
           if (comparisonValue && !Number.isNaN(threshold)) {
             comparisonValue.textContent = threshold.toFixed(2);
           }
+        }
+        if (comparisonSortToggle) {
+          comparisonSortToggle.addEventListener('click', () => {
+            comparisonSortMode = comparisonSortMode === 'qid' ? 'model' : 'qid';
+            comparisonSortToggle.textContent = comparisonSortMode === 'qid' ? 'Sort by model' : 'Sort by question';
+            renderComparison();
+          });
+        }
+        if (comparisonSortToggle) {
+          comparisonSortToggle.textContent = comparisonSortMode === 'qid' ? 'Sort by model' : 'Sort by question';
         }
         renderComparison();
       }
@@ -1502,7 +1540,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
                     entry["answer_text"] = entry["first"]["record"].get("answer_text") or entry["second"]["record"].get("answer_text", "")
                     entries.append(entry)
             if entries:
-                entries.sort(key=lambda e: e["diff"])
+                entries.sort(key=lambda e: _qid_key(e["qid"]))
                 comparison_pairs.append({
                     "id": f"{view_a['id']}__{view_b['id']}",
                     "first": {"view": view_a["id"], "label": view_a["label"]},
