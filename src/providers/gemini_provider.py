@@ -20,43 +20,44 @@ class GeminiProvider(Provider):
     def supports_images(self) -> bool:
         return True
 
-    def _to_contents(self, messages: List[Dict[str, Any]]) -> List[types.Content]:
-        # collapse system into prompt prefix, then user content with inline images
+    def _split_messages(self, messages: List[Dict[str, Any]]) -> Tuple[str, List[types.Content]]:
+        """Return (system_instruction, contents[]) using the official SDK types."""
         sys = ""
         for m in messages:
-            if m["role"] == "system":
-                sys = m["content"]
-        user = next((m for m in messages if m["role"] == "user"), None)
+            if m.get("role") == "system":
+                sys = str(m.get("content") or "")
+                break
+        user = next((m for m in messages if m.get("role") == "user"), None)
         parts = []
-        if isinstance(user["content"], list):  # parts with images
-            for part in user["content"]:
-                if part.get("type") == "text":
-                    txt = part["text"]
-                    if sys:
-                        txt = sys + "\n\n" + txt
-                        sys = ""
-                    parts.append(types.Part.from_text(txt))
-                elif part.get("type") == "image_url":
-                    url = part["image_url"]["url"]
-                    if url.startswith("data:image"):
-                        # inline base64
-                        header, b64 = url.split(",", 1)
-                        mime = header.split(";")[0].split(":")[1]
-                        parts.append(types.Part.from_bytes(data=base64.b64decode(b64), mime_type=mime))
-                    else:
-                        parts.append(types.Part.from_uri_file(url))
-        else:
-            txt = (sys + "\n\n" if sys else "") + str(user["content"])
-            parts = [types.Part.from_text(txt)]
-        return [types.Content(role="user", parts=parts)]
+        if user:
+            if isinstance(user.get("content"), list):  # parts with images
+                for part in user["content"]:
+                    if part.get("type") == "text":
+                        parts.append(types.Part.from_text(part.get("text", "")))
+                    elif part.get("type") == "image_url":
+                        url = part.get("image_url", {}).get("url") if isinstance(part.get("image_url"), dict) else part.get("image_url")
+                        if isinstance(url, str) and url.startswith("data:image"):
+                            # inline base64
+                            header, b64 = url.split(",", 1)
+                            mime = header.split(";")[0].split(":")[1]
+                            parts.append(types.Part.from_bytes(data=base64.b64decode(b64), mime_type=mime))
+                        elif isinstance(url, str):
+                            parts.append(types.Part.from_uri_file(url))
+            else:
+                parts = [types.Part.from_text(str(user.get("content", "")))]
+        return sys, [types.Content(role="user", parts=parts)]
 
     def ask(self, messages: List[Dict[str, Any]], **kwargs) -> Tuple[str, int]:
         start = time.time()
-        contents = self._to_contents(messages)
+        system_instruction, contents = self._split_messages(messages)
+        cfg = types.GenerateContentConfig(
+            temperature=kwargs.get("temperature", 0.2),
+            system_instruction=[system_instruction] if system_instruction else None
+        )
         resp = self.client.models.generate_content(
             model=self.model,
             contents=contents,
-            config=types.GenerateContentConfig(temperature=kwargs.get("temperature", 0.2))
+            config=cfg
         )
         text = resp.text or ""
         return text, int((time.time()-start)*1000)

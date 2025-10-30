@@ -10,6 +10,12 @@ python -m src.evalsys.cli run --models "provider:model" --limit <number>
 
 ---
 
+```bash
+python -m src.evalsys.cli report --scores data/out/graded --dataset data/out/dataset.jsonl
+```
+
+
+
 ## OpenAI Models
 
 ### GPT-5 (Reasoning Mode)
@@ -128,6 +134,11 @@ python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash"
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ### Gemini 2.5 Pro

@@ -4,6 +4,7 @@ import pandas as pd
 from typing import List, Dict, Any, Optional, Tuple, Set
 from jinja2 import Template
 import json, ast, os, re
+from collections import defaultdict, Counter
 
 HTML = """
 <!doctype html>
@@ -46,37 +47,51 @@ HTML = """
     * { box-sizing: border-box; }
     body { margin: 0; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji"; color: var(--text); background: var(--bg); }
     .container { max-width: 1200px; margin: 0 auto; }
-    header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 18px; }
+    header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
     header h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: 0.3px; }
     header .meta { color: var(--muted); font-size: 13px; }
-    header .actions { display:flex; gap:8px; align-items:center; }
+    header .actions { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
 
     .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid #232845; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); overflow: hidden; }
-    .card .hd { padding: 14px 16px; border-bottom: 1px solid #262b49; display:flex; align-items:center; justify-content:space-between; }
+    .card .hd { padding: 14px 16px; border-bottom: 1px solid #262b49; display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .card .bd { padding: 16px; }
+
+    /* Buttons & chips */
+    .controls { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid #cfd6ff33; background: var(--chip); color: var(--chip-text); cursor: pointer; font-size: 12px; }
+    .btn:hover { filter: brightness(1.03); }
+    .btn.active { outline: 2px solid var(--accent); }
+    select, option { font-size: 12px; padding: 6px 10px; border-radius: 8px; background: var(--panel-2); color: var(--text); border:1px solid #2b3156; }
 
     /* Chart area: ranked bar chart */
     #chartWrap { position: relative; }
     #scoreCanvas { width: 100%; height: 360px; display:block; }
-    .controls { display:flex; gap:10px; align-items:center; }
-    .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid #cfd6ff33; background: var(--chip); color: var(--chip-text); cursor: pointer; font-size: 12px; }
-    .btn:hover { filter: brightness(1.03); }
-    .btn.active { outline: 2px solid var(--accent); }
     .tooltip { position: absolute; pointer-events:none; background:#0d1022; color:#dce1ff; border:1px solid #2b3156; padding:8px 10px; border-radius:8px; font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); display:none; z-index: 10; }
 
     /* Q&A sections */
     .sect { margin-top: 22px; }
     .sect h2 { font-size: 16px; margin: 0 0 10px 0; font-weight: 600; color: #dce1ff; }
+
+    /* Model-level collapsible */
+    details.mcard { border: 1px solid #262b49; border-radius: 12px; margin: 12px 0; background: #151a30; }
+    details.mcard > summary { list-style:none; cursor:pointer; padding: 12px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    details.mcard > summary::-webkit-details-marker { display:none; }
+    .hdr-left { display:flex; gap:8px; align-items:center; }
+    .model-name { font-weight: 700; }
+    .muted { color: var(--muted); }
+    .avg-badge { padding: 4px 8px; border-radius: 999px; background:#1a2145; border: 1px solid #2e3867; font-size: 12px; color:#c8d2ff; }
+
     .qcard { border-top: 1px solid #262b49; padding: 12px 0; }
     details.qd { background: #151a30; border: 1px solid #262b49; border-radius: 10px; margin: 10px 0; }
     details.qd summary { list-style: none; cursor: pointer; padding: 12px 14px; display:flex; align-items:center; gap:10px; }
     details.qd summary::-webkit-details-marker { display:none; }
     .qid { font: 600 13px/1 ui-sans-serif,system-ui; color:#b9c2ff; padding: 3px 8px; background:#202652; border-radius: 8px; border:1px solid #2e3867; }
+    .cat { font: 600 11px/1 ui-sans-serif,system-ui; color:#a7f3d0; padding: 3px 6px; background:#0f2e26; border-radius: 8px; border:1px solid #1d4b41; }
     .scorechip { padding:2px 8px; border-radius: 999px; border:1px solid #2e375f; background:#22284a; color:#d8ddff; font-size:12px; }
     .score-ok { background:#173626; border-color:#245c3e; color:#98f2c9; }
     .score-warn { background:#3a341a; border-color:#6a5e2a; color:#ffe9a6; }
     .score-bad { background:#3a1a1a; border-color:#6a2a2a; color:#ffb0b0; }
-    .muted { color: var(--muted); }
+
     .kv { display:grid; grid-template-columns: 140px 1fr; gap: 10px; padding: 10px 14px; border-top:1px solid #202545; }
     .kv .k { color:#9aa2c0; font-size:12px; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space: pre-wrap; }
@@ -89,6 +104,13 @@ HTML = """
     a, button { color: inherit; }
     /* Hide rejected QID details when excluding rejections */
     .hide-rejects details.qd.rejected { display: none; }
+
+    /* Category table */
+    table.cat { width: 100%; border-collapse: collapse; }
+    table.cat th, table.cat td { border-bottom: 1px solid #262b49; padding: 8px 10px; text-align: left; font-size: 12px; }
+    table.cat tbody tr { border-left: 4px solid transparent; transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, filter 0.2s ease; }
+    table.cat tbody tr td { transition: color 0.25s ease; }
+    table.cat tbody tr:hover { filter: brightness(1.05); }
   </style>
 </head>
 <body>
@@ -97,6 +119,17 @@ HTML = """
       <h1>Surgical Benchmark</h1>
       <div class="actions">
         <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: {{ grader_name }}{% if total_empty > 0 %} · Empty answers: {{ total_empty }}{% endif %}</div>
+        <label style="display:flex; align-items:center; gap:6px;">
+          <span class="muted">Category</span>
+          <select id="categorySelect">
+            <option value="">All</option>
+            {% for cat in categories %}
+              <option value="{{ cat.id }}">{{ cat.id }} · {{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn" id="expandAll" type="button">Expand All</button>
+        <button class="btn" id="collapseAll" type="button">Collapse All</button>
         <button class="btn" id="themeToggle" type="button">Toggle Theme</button>
       </div>
     </header>
@@ -132,7 +165,7 @@ HTML = """
           {% for model, count in empty_stats.items() %}
             <div style="padding: 8px 12px; background: var(--panel-2); border-radius: 8px; border: 1px solid var(--grid);">
               <div style="font-weight: 600;">{{ model }}</div>
-              <div style="color: var(--muted); font-size: 12px;">{{ count }} empty answer{{ 's' if count > 1 else '' }}</div>
+              <div class="muted">{{ count }} empty answer{{ 's' if count > 1 else '' }}</div>
             </div>
           {% endfor %}
         </div>
@@ -140,22 +173,65 @@ HTML = """
     </section>
     {% endif %}
 
+    <!-- Category Breakdown -->
+    <section class="card" style="margin:12px 0;">
+      <div class="hd">
+        <strong>By Category</strong>
+        <div class="muted">Averages per category (answered-only and zeroed)</div>
+      </div>
+      <div class="bd">
+        {% for cat in categories %}
+          <details class="qd">
+            <summary>
+              <span class="qid">{{ "Q" ~ cat.id ~ ".x" }}</span>
+              <span class="cat">{{ cat.name }}</span>
+              <span class="muted">Questions: {{ cat.total_qs }}</span>
+            </summary>
+            <div class="answer">
+              <table class="cat">
+                <thead>
+                  <tr><th>Model</th><th>Provider</th><th>Avg (answered)</th><th>Avg (zeroed)</th><th>Answered</th><th>Rejects</th><th>Total</th></tr>
+                </thead>
+                <tbody>
+                {% for row in cat.model_rows %}
+                  <tr data-score="{{ "%.4f"|format(row.avg_zeroed) }}">
+                    <td>{{ row.model }}</td>
+                    <td class="muted">{{ row.provider }}</td>
+                    <td>{{ "%.3f"|format(row.avg_answered) }}</td>
+                    <td>{{ "%.3f"|format(row.avg_zeroed) }}</td>
+                    <td>{{ row.n_answered }}</td>
+                    <td>{{ row.n_reject }}</td>
+                    <td>{{ row.n_total }}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        {% endfor %}
+      </div>
+    </section>
+
     <!-- Q&A Details -->
     <section class="sect">
       <h2>Per-Question Details</h2>
       {% for model_name, rows in rows_by_model.items() %}
-      <div class="card" style="margin:12px 0;">
-        <div class="hd">
-          <div><strong>{{ model_name }}</strong> <span class="muted">Provider: {{ rows[0].provider }}</span></div>
-          <div class="muted">Average score: {{ "%.3f"|format(model_avgs[model_name]) }}</div>
-        </div>
+      <details class="mcard">
+        <summary>
+          <div class="hdr-left">
+            <span class="model-name">{{ model_name }}</span>
+            <span class="muted">Provider: {{ rows[0].provider }}</span>
+          </div>
+          <span class="avg-badge">Average: {{ "%.3f"|format(model_avgs[model_name]) }}</span>
+        </summary>
         <div class="bd">
           {% for r in rows %}
             {% set bucket = 'score-ok' if r.score >= 0.7 else ('score-warn' if r.score >= 0.4 else 'score-bad') %}
-            <details class="qd {{ 'rejected' if r.rejected else '' }}">
+            <details class="qd {{ 'rejected' if r.rejected else '' }}" data-cat="{{ r.category_id }}">
               <summary>
                 <span class="qid">{{ r.qid }}</span>
-                <span class="muted">on page {{ r.page_start }}–{{ r.page_end }}</span>
+                <span class="cat">{{ r.category_name }}</span>
+                <span class="muted">page {{ r.page_start }}–{{ r.page_end }}</span>
                 {% if r.rejected %}
                   <span class="scorechip score-bad">Rejected</span>
                 {% else %}
@@ -196,7 +272,7 @@ HTML = """
             </details>
           {% endfor %}
         </div>
-      </div>
+      </details>
       {% endfor %}
     </section>
 
@@ -219,17 +295,18 @@ HTML = """
       const qids = DATA.meta.qids;
       const models = DATA.meta.models;
       const totalQuestions = DATA.meta.total_questions;
+      const categories = DATA.meta.categories || [];
       const colorForIdx = (i) => {
         const hue = (i * 137.508) % 360; // golden angle spacing
         return `hsl(${hue}deg 70% 55%)`;
       };
 
       // Build ranked bars for each mode
-      const barsScore = [...(DATA.bars_exclude || DATA.bars || [])];
-      const barsZeroed = [...(DATA.bars_zeroed || [])];
-      const barsReject = [...(DATA.bars_reject || [])];
-      let mode = 'score';
-      let bars = barsScore;
+      let mode = 'zeroed';
+      let currentCat = '';
+      let barsScore = [...(DATA.bars_exclude || DATA.bars || [])];
+      let barsZeroed = [...(DATA.bars_zeroed || [])];
+      let barsReject = [...(DATA.bars_reject || [])];
       const tip = document.getElementById('tip');
 
       function drawAxes() {
@@ -253,7 +330,51 @@ HTML = """
         }
       }
 
+      function scoreToPalette(score) {
+        const s = Math.min(1, Math.max(0, Number.isFinite(score) ? score : 0));
+        const sat = 82;
+        let hue;
+        if (s <= 0.5) {
+          const t = s / 0.5; // 0 → red, 1 → yellow
+          hue = 0 + (50 * t);
+        } else {
+          const t = (s - 0.5) / 0.5; // 0 → yellow, 1 → green
+          hue = 50 + (75 * t);
+        }
+        const light = (18 + s * 35);
+        const borderLight = Math.min(78, light + 18);
+        const alpha = (0.22 + s * 0.18).toFixed(2);
+        const bg = `hsla(${hue.toFixed(1)}, ${sat}%, ${light.toFixed(0)}%, ${alpha})`;
+        const border = `hsl(${hue.toFixed(1)}, ${sat + 4}%, ${borderLight.toFixed(0)}%)`;
+        const text = light < 40 ? '#f5f6ff' : '';
+        const muted = light < 40 ? '#d8ddff' : '';
+        return { bg, border, text, muted };
+      }
+
+      function refreshCategoryColors() {
+        document.querySelectorAll('table.cat tbody tr[data-score]').forEach((row) => {
+          const score = parseFloat(row.dataset.score || '0');
+          if (!Number.isFinite(score)) return;
+          const palette = scoreToPalette(score);
+          row.style.setProperty('--score-bg', palette.bg);
+          row.style.setProperty('--score-border', palette.border);
+          row.style.background = palette.bg;
+          row.style.borderLeftColor = palette.border;
+          const cells = row.querySelectorAll('td');
+          if (palette.text) {
+            row.style.color = palette.text;
+            cells.forEach((cell, idx) => {
+              cell.style.color = idx === 1 && palette.muted ? palette.muted : palette.text;
+            });
+          } else {
+            row.style.removeProperty('color');
+            cells.forEach((cell) => cell.style.removeProperty('color'));
+          }
+        });
+      }
+
       function drawPoints(progress=1) {
+        const bars = (mode === 'reject') ? barsReject : (mode === 'zeroed' ? barsZeroed : barsScore);
         // bars
         const rowH = Math.max(18, Math.min(40, innerH / Math.max(1,bars.length)));
         const gap = 8;
@@ -263,11 +384,10 @@ HTML = """
           const b = bars[i];
           const y = offsetY + i*(rowH+gap);
           const w = (b.avg) * innerW * progress;
-          // draw bar first
           const color = colorForIdx(i);
           ctx.fillStyle = color;
           ctx.fillRect(PADDING.l, y, Math.max(2, w), rowH);
-          // model label in left gutter, clipped to avoid overlap
+          // label gutter
           ctx.save();
           ctx.beginPath();
           ctx.rect(0, y, PADDING.l - 8, rowH);
@@ -290,17 +410,18 @@ HTML = """
 
       // initial animation
       let t0 = null;
-      function animate(ts) {
+      function animateBars(ts) {
         if (!t0) t0 = ts;
         const d = ts - t0; const p = Math.min(1, d/800);
         render(p);
-        if (p < 1) requestAnimationFrame(animate);
+        if (p < 1) requestAnimationFrame(animateBars);
       }
-      requestAnimationFrame(animate);
+      requestAnimationFrame(animateBars);
 
       // tooltip interactions for bars
       canvas.addEventListener('mousemove', (ev) => {
         const rect = canvas.getBoundingClientRect(); const x = ev.clientX - rect.left; const y = ev.clientY - rect.top;
+        const bars = (mode === 'reject') ? barsReject : (mode === 'zeroed' ? barsZeroed : barsScore);
         let hit = null;
         for (const b of bars) {
           const g = b._geom; if (!g) continue;
@@ -311,12 +432,12 @@ HTML = """
           if (mode === 'reject') {
             const rate = (hit.avg*100).toFixed(1)+'%';
             const ntot = hit.n_total ?? totalQuestions;
-            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class=\"muted\">(${hit.provider})</span></div><div>Rejections: <strong>${rate}</strong> (empty=${hit.n_reject||0}, total=${ntot})</div><div class=\"muted\">Higher is worse</div>`;
+            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider})</span></div><div>Rejections: <strong>${rate}</strong> (empty=${hit.n_reject||0}, total=${ntot})</div><div class="muted">Higher is worse</div>`;
           } else if (mode === 'zeroed') {
             const ntot = hit.n_total ?? (hit.n + (hit.n_reject||0));
-            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class=\"muted\">(${hit.provider})</span></div><div>Avg (zeros for rejects): <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n}, rejects=${hit.n_reject||0}, total=${ntot})</div>`;
+            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider})</span></div><div>Avg (zeros for rejects): <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n}, rejects=${hit.n_reject||0}, total=${ntot})</div>`;
           } else {
-            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class=\"muted\">(${hit.provider})</span></div><div>Average: <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n})</div>`;
+            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider})</span></div><div>Average: <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n})</div>`;
           }
         } else { tip.style.display = 'none'; }
       });
@@ -333,32 +454,64 @@ HTML = """
       }
       function setMode(newMode) {
         mode = newMode;
-        if (mode === 'reject') {
-          bars = barsReject;
-          titleEl.textContent = 'Rejection Percentage (ranked)';
-          hintEl.textContent = 'Higher is worse — hover for details';
-          setActive('mode-reject');
-          document.body.classList.remove('hide-rejects');
-        } else if (mode === 'zeroed') {
-          bars = barsZeroed;
-          titleEl.textContent = 'All Questions Accounted (ranked)';
-          hintEl.textContent = 'Counts rejections as 0 — hover for details';
-          setActive('mode-zeroed');
-          document.body.classList.remove('hide-rejects');
-        } else {
-          bars = barsScore;
-          titleEl.textContent = 'Answered Only (ranked)';
-          hintEl.textContent = 'Excludes rejections — hover for details';
-          setActive('mode-score');
-          document.body.classList.add('hide-rejects');
-        }
-        render(1);
+        applyCategory(currentCat, false); // refresh bars only
       }
       document.getElementById('mode-score')?.addEventListener('click', () => setMode('score'));
       document.getElementById('mode-zeroed')?.addEventListener('click', () => setMode('zeroed'));
       document.getElementById('mode-reject')?.addEventListener('click', () => setMode('reject'));
-      // Initialize default (All questions, rejects as 0)
+
+      // Category filter: filter question details + update chart
+      const catSelect = document.getElementById('categorySelect');
+      function applyCategory(catId, animateTransition=true) {
+        currentCat = catId || '';
+        // Update buttons
+        if (mode === 'reject') {
+          setActive('mode-reject');
+          hintEl.textContent = 'Higher is worse — hover for details';
+        } else if (mode === 'zeroed') {
+          setActive('mode-zeroed');
+          hintEl.textContent = 'Counts rejections as 0 — hover for details';
+        } else {
+          setActive('mode-score');
+          hintEl.textContent = 'Excludes rejections — hover for details';
+        }
+
+        // Update chart title + data
+        if (!currentCat) {
+          titleEl.textContent = 'All Questions Accounted (ranked)';
+          barsScore = [...(DATA.bars_exclude || DATA.bars || [])];
+          barsZeroed = [...(DATA.bars_zeroed || [])];
+          barsReject = [...(DATA.bars_reject || [])];
+        } else {
+          const cat = DATA.cat_bars?.[currentCat] || {};
+          titleEl.textContent = `Category ${currentCat} · ${(categories.find(c => c.id == currentCat)?.name || '')}`;
+          barsScore = [...(cat.exclude || [])];
+          barsZeroed = [...(cat.zeroed || [])];
+          barsReject = [...(cat.reject || [])];
+        }
+        // Update details filtering
+        document.querySelectorAll('details.qd').forEach((el) => {
+          const cat = el.getAttribute('data-cat');
+          if (!currentCat || !cat) {
+            el.style.display = '';
+          } else {
+            el.style.display = (cat === currentCat) ? '' : 'none';
+          }
+        });
+        if (animateTransition) {
+          t0 = null;
+          requestAnimationFrame(animateBars);
+        } else {
+          render(1);
+        }
+        refreshCategoryColors();
+      }
+      catSelect?.addEventListener('change', (e) => applyCategory(e.target.value, true));
+
+      // Initialize defaults
       setMode('zeroed');
+      applyCategory('', false);
+      refreshCategoryColors();
 
       // Images lazy-toggle with details-open and fallback path
       document.addEventListener('click', (e) => {
@@ -387,6 +540,16 @@ HTML = """
       themeToggle && themeToggle.addEventListener('click', () => {
         const cur = document.documentElement.getAttribute('data-theme') || 'light';
         applyTheme(cur === 'light' ? 'dark' : 'light');
+      });
+
+      // Expand/Collapse all models
+      const expandAll = document.getElementById('expandAll');
+      const collapseAll = document.getElementById('collapseAll');
+      expandAll?.addEventListener('click', () => {
+        document.querySelectorAll('details.mcard').forEach(d => d.open = true);
+      });
+      collapseAll?.addEventListener('click', () => {
+        document.querySelectorAll('details.mcard').forEach(d => d.open = false);
       });
     </script>
 
@@ -420,6 +583,40 @@ def _safe_list(val: Any) -> List[str]:
     except Exception:
         return []
 
+def _qid_key(q: str) -> Tuple[int, int, str]:
+    m = re.match(r"Q(\d+)\.(\d+)", str(q))
+    if m:
+        return (int(m.group(1)), int(m.group(2)), str(q))
+    return (999999, 999999, str(q))
+
+def _major_of(qid: str) -> Optional[int]:
+    m = re.match(r"Q(\d+)\.", str(qid))
+    return int(m.group(1)) if m else None
+
+def _canonical_categories(qmap: Dict[str, Dict[str, Any]]) -> Dict[int, str]:
+    """
+    Build a mapping {major_number -> display_name} using dataset chapter names.
+    Falls back to 'Chapter <n>' if no chapter discovered.
+    """
+    buckets: Dict[int, Counter] = defaultdict(Counter)
+    for qid, obj in qmap.items():
+        maj = _major_of(qid)
+        if maj is None:
+            continue
+        chap = str(obj.get("chapter", "") or "").strip()
+        if chap:
+            # normalize small variations (trim punctuation / ellipses)
+            chap = re.sub(r"\s+", " ", chap).strip(" .\u00a0\t\r\n")
+            buckets[maj][chap] += 1
+    cats: Dict[int, str] = {}
+    for maj in sorted({_major_of(q) for q in qmap.keys() if _major_of(q) is not None}):
+        if buckets.get(maj):
+            name, _ = buckets[maj].most_common(1)[0]
+            cats[maj] = name
+        else:
+            cats[maj] = f"Chapter {maj}"
+    return cats
+
 def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None, empty_stats_path: Optional[Path] = None):
     base = Path(csv_path)
     if base.is_dir():
@@ -446,6 +643,12 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
     if dataset_path is None:
         dataset_path = (base_dir.parent / "dataset.jsonl") if base_dir.name == "graded" else (base_dir / "dataset.jsonl")
     qmap = _read_dataset(dataset_path)
+
+    # Compute canonical categories from dataset
+    categories_by_major = _canonical_categories(qmap)
+    all_majors = sorted(categories_by_major.keys())
+    # Prepare reverse map qid->major
+    qid_major: Dict[str, Optional[int]] = {qid: _major_of(qid) for qid in qmap.keys()}
 
     # Load empty answer statistics if available
     empty_stats = {}  # model -> count
@@ -516,6 +719,9 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
 
         model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", model).strip("_") or "model"
 
+        maj = _major_of(qid)
+        cat_name = categories_by_major.get(maj, f"Chapter {maj}" if maj is not None else "")
+
         rec = {
             "provider": provider,
             "model": model,
@@ -533,18 +739,14 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             "images": fixed_imgs,
             "model_slug": model_slug,
             "rejected": False,
+            "category_id": str(maj) if maj is not None else "",
+            "category_name": cat_name,
         }
         rows_by_model.setdefault(model, []).append(rec)
         # aggregate
         sum_by_model[model] = sum_by_model.get(model, 0.0) + float(rec["score"])
 
     # Sort rows in each model by QID
-    def _qid_key(q: str) -> Tuple[int, int, str]:
-        m = re.match(r"Q(\d+)\.(\d+)", str(q))
-        if m:
-            return (int(m.group(1)), int(m.group(2)), str(q))
-        return (999999, 999999, str(q))
-
     for m in rows_by_model:
         rows_by_model[m].sort(key=lambda r: _qid_key(r["qid"]))
 
@@ -617,19 +819,6 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
     # Sort rejection from worst to best (higher first)
     bars_reject = sorted(bars_reject_raw, key=lambda x: x["avg"], reverse=True)
 
-    data_json = json.dumps({
-        "meta": {
-            "qids": qids,
-            "models": models,
-            "total_questions": len(qids),
-        },
-        "points": points,
-        "bars": bars_exclude,  # backward compat
-        "bars_exclude": bars_exclude,
-        "bars_zeroed": bars_zeroed,
-        "bars_reject": bars_reject,
-    })
-
     # Add rejected questions to per-model rows so the main view lists all questions.
     # These entries are tagged as rejected and hidden when excluding rejections.
     if empty_qids_by_model:
@@ -649,6 +838,8 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
                     absp = "/out/images/" + base
                     fixed_imgs.append({"rel": relp, "abs": absp})
                 model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", m).strip("_") or "model"
+                maj = _major_of(qid)
+                cat_name = categories_by_major.get(maj, f"Chapter {maj}" if maj is not None else "")
                 rec = {
                     "provider": provider,
                     "model": m,
@@ -666,6 +857,8 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
                     "images": fixed_imgs,
                     "model_slug": model_slug,
                     "rejected": True,
+                    "category_id": str(maj) if maj is not None else "",
+                    "category_name": cat_name,
                 }
                 rows_by_model.setdefault(m, []).append(rec)
         # Resort rows to keep QIDs ordered
@@ -682,6 +875,101 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         vals = [v for v in df["grader"].unique() if isinstance(v, str)]
         grader_name = vals[0] if vals else ""
 
+    # ----- Build category aggregates -----
+    # Per-category per-model stats and per-category bars
+    cat_list: List[Dict[str, Any]] = []
+    cat_bars: Dict[str, Dict[str, Any]] = {}
+    # Precompute total questions per category from dataset
+    qs_by_cat: Dict[int, Set[str]] = defaultdict(set)
+    for qid in qmap.keys():
+        maj = _major_of(qid)
+        if maj is not None:
+            qs_by_cat[maj].add(qid)
+
+    # Build per-category model stats
+    for maj in all_majors:
+        cat_name = categories_by_major.get(maj, f"Chapter {maj}")
+        # Build stats rows for table
+        rows_for_cat: List[Dict[str, Any]] = []
+        bars_exclude_cat: List[Dict[str, Any]] = []
+        bars_zeroed_cat: List[Dict[str, Any]] = []
+        bars_reject_cat: List[Dict[str, Any]] = []
+        for m in models:
+            answered = [r for r in rows_by_model.get(m, []) if not r["rejected"] and r.get("category_id") == str(maj)]
+            n_answered = len(answered)
+            sum_score = sum(r["score"] for r in answered)
+            rejects_in_cat = 0
+            if empty_qids_by_model.get(m):
+                rejects_in_cat = sum(1 for qid in empty_qids_by_model[m] if _major_of(qid) == maj)
+            n_total = n_answered + rejects_in_cat
+            avg_answered = (sum_score / n_answered) if n_answered > 0 else 0.0
+            avg_zeroed = (sum_score / n_total) if n_total > 0 else 0.0
+            provider = provider_by_model.get(m, (rows_by_model[m][0]["provider"] if rows_by_model.get(m) else ""))
+            rows_for_cat.append({
+                "model": m,
+                "provider": provider,
+                "avg_answered": avg_answered,
+                "avg_zeroed": avg_zeroed,
+                "n_answered": n_answered,
+                "n_reject": rejects_in_cat,
+                "n_total": n_total,
+            })
+            bars_exclude_cat.append({
+                "model": m,
+                "provider": provider,
+                "avg": avg_answered,
+                "n": n_answered,
+            })
+            bars_zeroed_cat.append({
+                "model": m,
+                "provider": provider,
+                "avg": avg_zeroed,
+                "n": n_answered,
+                "n_reject": rejects_in_cat,
+                "n_total": n_total,
+            })
+            frac_reject = (rejects_in_cat / n_total) if n_total > 0 else 0.0
+            bars_reject_cat.append({
+                "model": m,
+                "provider": provider,
+                "avg": frac_reject,
+                "n": n_answered,
+                "n_reject": rejects_in_cat,
+                "n_total": n_total,
+            })
+        # Sort rows by zeroed average
+        rows_for_cat.sort(key=lambda r: r["avg_zeroed"], reverse=True)
+        bars_exclude_cat.sort(key=lambda r: r["avg"], reverse=True)
+        bars_zeroed_cat.sort(key=lambda r: r["avg"], reverse=True)
+        bars_reject_cat.sort(key=lambda r: r["avg"], reverse=True)
+
+        cat_list.append({
+            "id": str(maj),
+            "name": cat_name,
+            "total_qs": len(qs_by_cat.get(maj, set())),
+            "model_rows": rows_for_cat,
+        })
+        cat_bars[str(maj)] = {
+            "exclude": bars_exclude_cat,
+            "zeroed": bars_zeroed_cat,
+            "reject": bars_reject_cat,
+        }
+
+    data_json = json.dumps({
+        "meta": {
+            "qids": qids,
+            "models": models,
+            "total_questions": len(qids),
+            "categories": [{"id": str(m), "name": categories_by_major.get(m, f"Chapter {m}")} for m in all_majors],
+        },
+        "points": points,
+        "bars": bars_exclude,  # backward compat
+        "bars_exclude": bars_exclude,
+        "bars_zeroed": bars_zeroed,
+        "bars_reject": bars_reject,
+        "cat_bars": cat_bars,
+    })
+
     tpl = Template(HTML)
     html = tpl.render(
         total=len(qids),
@@ -692,5 +980,6 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         grader_name=grader_name,
         empty_stats=empty_stats,
         total_empty=total_empty,
+        categories=cat_list,
     )
     html_path.write_text(html, encoding="utf-8")

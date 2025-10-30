@@ -13,23 +13,129 @@ except ImportError:
     genai_errors = None
 
 class OpenAIGrader(Grader):
+    """
+    Grader powered by OpenAI models.
+
+    **What's new:**
+    - Uses the **Responses API** automatically for GPT‑5 models (gpt-5, gpt-5-mini),
+      which fixes the "GPT‑5 Mini as grader" issue when using Chat Completions.
+    - Falls back to Chat Completions for non‑GPT‑5 models.
+    """
     name = "gpt-5-mini"
-    def __init__(self, model: str = "gpt-5-mini"):
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    def __init__(self, model: str = "gpt-5-mini", base_url: str | None = None, api_key: str | None = None):
+        kwargs: Dict[str, Any] = {}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"), **kwargs)
         self.model = model
 
+    # ---------- Responses API helpers ----------
+    def _msgs_to_responses(self, prompt: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
+        """Convert chat-style prompt to Responses API 'input' + 'instructions'."""
+        instructions = ""
+        input_messages: List[Dict[str, Any]] = []
+        # Ensure strict JSON-only instruction comes first
+        instructions_parts: List[str] = ["Return a JSON object only."]
+        for m in prompt.get("messages", []):
+            role = m.get("role")
+            if role == "system":
+                instructions_parts.append(str(m.get("content") or ""))
+            elif role == "user":
+                content = m.get("content")
+                if isinstance(content, str):
+                    input_messages.append({
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": content}],
+                    })
+                elif isinstance(content, list):
+                    converted: List[Dict[str, Any]] = []
+                    for part in content:
+                        if part.get("type") == "text":
+                            converted.append({"type": "input_text", "text": part.get("text", "")})
+                        elif part.get("type") == "image_url":
+                            iu = part.get("image_url")
+                            url = iu.get("url") if isinstance(iu, dict) else (iu if isinstance(iu, str) else None)
+                            if url:
+                                converted.append({"type": "input_image", "image_url": url})
+                    if converted:
+                        input_messages.append({"role": "user", "content": converted})
+        instructions = "\n".join(p for p in instructions_parts if p.strip())
+        return input_messages, instructions
+
+    def _extract_text_from_responses_sdk(self, resp: Any) -> str:
+        # Preferred: unified 'output_text'
+        try:
+            txt = getattr(resp, "output_text", None)
+            if isinstance(txt, str) and txt.strip():
+                return txt
+        except Exception:
+            pass
+        # Fallback: walk 'output' blocks
+        try:
+            output = getattr(resp, "output", None)
+            if output:
+                chunks: List[str] = []
+                for item in output:
+                    typ = getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else None)
+                    if typ in {"output_text", "text"}:
+                        t = getattr(item, "text", None) or (item.get("text") if isinstance(item, dict) else None)
+                        if isinstance(t, str) and t.strip():
+                            chunks.append(t)
+                            continue
+                    if typ == "message":
+                        content = getattr(item, "content", None) or (item.get("content") if isinstance(item, dict) else None)
+                        if isinstance(content, list):
+                            for c in content:
+                                ctype = getattr(c, "type", None) or (c.get("type") if isinstance(c, dict) else None)
+                                if ctype in {"output_text", "text"}:
+                                    t = getattr(c, "text", None) or (c.get("text") if isinstance(c, dict) else None)
+                                    if isinstance(t, str) and t.strip():
+                                        chunks.append(t)
+                if chunks:
+                    return "".join(chunks)
+        except Exception:
+            pass
+        # Last ditch
+        try:
+            txt = getattr(resp, "text", None)
+            if isinstance(txt, str) and txt.strip():
+                return txt
+        except Exception:
+            pass
+        return ""
+
     def grade(self, prompt: Dict[str, Any]) -> Tuple[float, str, list, bool]:
-        # ask for structured JSON
+        """
+        Return (score 0..1, justification, missed[], harmful?).
+
+        For GPT‑5 family we call the **Responses API** with `max_output_tokens`,
+        otherwise we use Chat Completions with `max_tokens`.
+        """
+        model = self.model or "gpt-5-mini"
+        if str(model).startswith("gpt-5"):
+            # Responses API path (recommended for GPT‑5)
+            input_messages, instructions = self._msgs_to_responses(prompt)
+            params: Dict[str, Any] = {
+                "model": model,
+                "input": input_messages,
+                "instructions": instructions,
+                "max_output_tokens": 350,
+                # Reasoning effort not strictly needed for grading; keep default
+            }
+            resp = self.client.responses.create(**params)
+            raw = self._extract_text_from_responses_sdk(resp) or "{}"
+            data = _robust_json_parse(raw)
+            return _normalize_grader_output(data)
+
+        # --- Non GPT‑5 path: Chat Completions ---
         sys = {"role": "system", "content": "Return a JSON object only."}
         msgs = [sys] + prompt["messages"]
-        params = {}
-        if str(self.model).startswith("gpt-5"):
-            params["max_completion_tokens"] = 350
-            # Many gpt-5 chat endpoints use fixed temperature; avoid passing
-        else:
-            params["max_tokens"] = 350
-            params["temperature"] = 0.0
-        resp = self.client.chat.completions.create(model=self.model, messages=msgs, **params)
+        params = {
+            "max_tokens": 350,
+            "temperature": 0.0,
+        }
+        # Some providers mirror 'max_completion_tokens' for newer models; keep it simple here.
+        resp = self.client.chat.completions.create(model=model, messages=msgs, **params)
         txt = resp.choices[0].message.content or "{}"
         data = _robust_json_parse(txt)
         return _normalize_grader_output(data)
