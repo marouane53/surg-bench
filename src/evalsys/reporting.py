@@ -543,9 +543,9 @@ HTML = """
         if (currentCat && gData.cat_bars && gData.cat_bars[currentCat]) {
           base = gData.cat_bars[currentCat];
         }
-        barsScore = (base.bars_exclude || base.bars || []).map((b) => ({...b}));
-        barsZeroed = (base.bars_zeroed || []).map((b) => ({...b}));
-        barsReject = (base.bars_reject || []).map((b) => ({...b}));
+        barsScore = (base.bars_exclude || base.exclude || base.bars || []).map((b) => ({...b}));
+        barsZeroed = (base.bars_zeroed || base.zeroed || []).map((b) => ({...b}));
+        barsReject = (base.bars_reject || base.reject || []).map((b) => ({...b}));
       }
 
       function updateMeta() {
