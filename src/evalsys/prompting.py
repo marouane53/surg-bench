@@ -38,7 +38,7 @@ GRADING_RUBRIC = (
 def build_grading_prompt(question: str, ref_answer: str, candidate: str) -> Dict[str, Any]:
     user_text = (
         f"Question:\n{question}\n\nReference answer:\n{ref_answer}\n\nCandidate answer:\n{candidate}\n\n"
-        "Grade now."
+        "Grade now. Respond in json."
     )
     return {
         "messages": [

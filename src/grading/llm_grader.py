@@ -3,6 +3,7 @@ import json, time, os, re
 from typing import Dict, Any, Tuple, List
 from .base import Grader
 from openai import OpenAI
+import httpx
 try:
     from google import genai
     from google.genai import types
@@ -26,8 +27,10 @@ class OpenAIGrader(Grader):
         kwargs: Dict[str, Any] = {}
         if base_url:
             kwargs["base_url"] = base_url
-        self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"), **kwargs)
+        self._api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.client = OpenAI(api_key=self._api_key, **kwargs)
         self.model = model
+        self._supports_responses_sdk = bool(getattr(self.client, "responses", None) and hasattr(self.client.responses, "create"))
 
     # ---------- Responses API helpers ----------
     def _msgs_to_responses(self, prompt: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
@@ -35,7 +38,7 @@ class OpenAIGrader(Grader):
         instructions = ""
         input_messages: List[Dict[str, Any]] = []
         # Ensure strict JSON-only instruction comes first
-        instructions_parts: List[str] = ["Return a JSON object only."]
+        instructions_parts: List[str] = ["Return a json object only."]
         for m in prompt.get("messages", []):
             role = m.get("role")
             if role == "system":
@@ -70,6 +73,10 @@ class OpenAIGrader(Grader):
                 return txt
         except Exception:
             pass
+        if isinstance(resp, dict):
+            txt = resp.get("output_text")
+            if isinstance(txt, str) and txt.strip():
+                return txt
         # Fallback: walk 'output' blocks
         try:
             output = getattr(resp, "output", None)
@@ -95,6 +102,28 @@ class OpenAIGrader(Grader):
                     return "".join(chunks)
         except Exception:
             pass
+        if isinstance(resp, dict):
+            output = resp.get("output")
+            if output:
+                chunks: List[str] = []
+                for item in output:
+                    typ = item.get("type") if isinstance(item, dict) else None
+                    if typ in {"output_text", "text"}:
+                        t = item.get("text")
+                        if isinstance(t, str) and t.strip():
+                            chunks.append(t)
+                            continue
+                    if typ == "message":
+                        content = item.get("content")
+                        if isinstance(content, list):
+                            for c in content:
+                                ctype = c.get("type")
+                                if ctype in {"output_text", "text"}:
+                                    t = c.get("text")
+                                    if isinstance(t, str) and t.strip():
+                                        chunks.append(t)
+                if chunks:
+                    return "".join(chunks)
         # Last ditch
         try:
             txt = getattr(resp, "text", None)
@@ -103,6 +132,48 @@ class OpenAIGrader(Grader):
         except Exception:
             pass
         return ""
+
+    def _response_to_dict(self, resp: Any) -> Dict[str, Any]:
+        if isinstance(resp, dict):
+            return resp
+        for attr in ("model_dump", "to_dict"):
+            fn = getattr(resp, attr, None)
+            if callable(fn):
+                try:
+                    return fn()
+                except Exception:
+                    pass
+        fn_json = getattr(resp, "model_dump_json", None)
+        if callable(fn_json):
+            try:
+                return json.loads(fn_json())
+            except Exception:
+                pass
+        fn_json2 = getattr(resp, "to_json", None)
+        if callable(fn_json2):
+            try:
+                return json.loads(fn_json2())
+            except Exception:
+                pass
+        # Fallback: try attribute access for known fields
+        return {
+            "status": getattr(resp, "status", None),
+            "output": getattr(resp, "output", None),
+            "output_text": getattr(resp, "output_text", None),
+            "incomplete_details": getattr(resp, "incomplete_details", None),
+        }
+
+    def _invoke_responses(self, params: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+        if self._supports_responses_sdk:
+            resp = self.client.responses.create(**params)
+            resp_dict = self._response_to_dict(resp)
+            raw = self._extract_text_from_responses_sdk(resp)
+        else:
+            http_resp = self.client.post("/responses", cast_to=httpx.Response, body=params)
+            http_resp.raise_for_status()
+            resp_dict = http_resp.json()
+            raw = self._extract_text_from_responses_sdk(resp_dict)
+        return resp_dict, raw or ""
 
     def grade(self, prompt: Dict[str, Any]) -> Tuple[float, str, list, bool]:
         """
@@ -119,13 +190,30 @@ class OpenAIGrader(Grader):
                 "model": model,
                 "input": input_messages,
                 "instructions": instructions,
-                "max_output_tokens": 350,
+                "max_output_tokens": 900,
+                "reasoning": {"effort": "minimal"},
+                "text": {
+                    "format": {"type": "json_object"},
+                    "verbosity": "low"
+                },
                 # Reasoning effort not strictly needed for grading; keep default
             }
-            resp = self.client.responses.create(**params)
-            raw = self._extract_text_from_responses_sdk(resp) or "{}"
-            data = _robust_json_parse(raw)
-            return _normalize_grader_output(data)
+            max_tokens = params["max_output_tokens"]
+            for attempt in range(int(os.getenv("GRADER_MAX_ATTEMPTS", "3"))):
+                resp_dict, raw = self._invoke_responses(params)
+                status = resp_dict.get("status") if isinstance(resp_dict, dict) else None
+                if status == "incomplete" and (resp_dict.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
+                    max_tokens = min(int(max_tokens * 2), 4096)
+                    params["max_output_tokens"] = max_tokens
+                    # ensure we stay in minimal effort for retries
+                    params["reasoning"] = {"effort": "minimal"}
+                    continue
+                if not raw.strip():
+                    raw = self._extract_text_from_responses_sdk(resp_dict) or "{}"
+                data = _robust_json_parse(raw)
+                return _normalize_grader_output(data)
+            # If all attempts result in incomplete or unparsable output, fall back to zeros.
+            return 0.0, "", [], False
 
         # --- Non GPT‑5 path: Chat Completions ---
         sys = {"role": "system", "content": "Return a JSON object only."}
