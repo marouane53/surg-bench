@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 from jinja2 import Template
 import json, ast, os, re, copy, math
 from collections import defaultdict, Counter
+from itertools import combinations
 
 HTML = """
 <!doctype html>
@@ -109,6 +110,25 @@ HTML = """
     .empty-card { padding: 8px 12px; background: var(--panel-2); border-radius: 8px; border: 1px solid var(--grid); }
 
     .view-block { width: 100%; }
+
+    .comparison-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:12px; }
+    .comparison-controls label { display:flex; align-items:center; gap:6px; font-size:12px; color: var(--muted); }
+    .comparison-controls input[type="range"] { width: 180px; }
+    .comparison-results { margin-top: 8px; }
+    .comparison-results details { background: #151a30; border: 1px solid #262b49; border-radius: 10px; margin-bottom: 12px; }
+    .comparison-results details:last-child { margin-bottom: 0; }
+    .comparison-results summary { list-style: none; cursor: pointer; padding: 12px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    .comparison-results summary::-webkit-details-marker { display:none; }
+    .comparison-body { padding: 0 14px 14px 14px; }
+    .comparison-body .comp-question { margin-bottom: 12px; }
+    .comp-text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space: pre-wrap; background:#11152b; border:1px solid #202545; border-radius:8px; padding:8px; color:#d8ddff; }
+    .comp-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }
+    .comp-side { border:1px solid #202545; border-radius:8px; background:#161c33; padding:10px; }
+    .comp-side h4 { margin:0 0 6px 0; font-size:13px; color:#dce1ff; }
+    .comp-meta { font-size:12px; color: var(--muted); margin-bottom:6px; }
+    .comp-meta strong { color: var(--text); }
+    .comp-empty { font-size:12px; color: var(--muted); padding:12px 0; }
+    .diff-chip { padding:3px 8px; border-radius:999px; background:#3a1a1a; border:1px solid #6a2a2a; color:#ffb0b0; font-size:12px; }
   </style>
 </head>
 <body>
@@ -242,6 +262,28 @@ HTML = """
                 <p class="muted">Select a specific grader from the dropdown above to inspect model answers and rationales.</p>
               </div>
             </div>
+            {% if has_comparisons %}
+            <div class="card" id="comparisonCard">
+              <div class="hd">
+                <strong>Grader Comparison</strong>
+                <div class="muted">Highlight questions where graders disagree</div>
+              </div>
+              <div class="bd">
+                <div class="comparison-controls">
+                  <label>
+                    <span class="muted">Grader pair</span>
+                    <select id="comparisonPair"></select>
+                  </label>
+                  <label>
+                    <span class="muted">Score gap ≥</span>
+                    <span id="comparisonValue">0.20</span>
+                  </label>
+                  <input type="range" id="comparisonSlider" min="0" max="1" step="0.01" value="0.20">
+                </div>
+                <div id="comparisonResults" class="comparison-results"></div>
+              </div>
+            </div>
+            {% endif %}
           {% elif view.model_order %}
             {% for model_name in view.model_order %}
               {% set rows = view.rows_by_model.get(model_name, []) %}
@@ -334,6 +376,7 @@ HTML = """
 
       const categories = DATA.meta.categories || [];
       const GRADERS = DATA.graders || {};
+      const COMPARISON_PAIRS = (DATA.comparisons && DATA.comparisons.pairs) || [];
       const ORDER = DATA.order || Object.keys(GRADERS);
       let currentGrader = DATA.default || (ORDER.length ? ORDER[0] : null);
       let currentCat = '';
@@ -350,11 +393,32 @@ HTML = """
       const hintEl = document.getElementById('chartHint');
       const metaGraderEl = document.getElementById('metaGrader');
       const metaEmptyEl = document.getElementById('metaEmpty');
+      const comparisonCard = document.getElementById('comparisonCard');
+      const comparisonPairSelect = document.getElementById('comparisonPair');
+      const comparisonSlider = document.getElementById('comparisonSlider');
+      const comparisonValue = document.getElementById('comparisonValue');
+      const comparisonResults = document.getElementById('comparisonResults');
 
       const colorForIdx = (i) => {
         const hue = (i * 137.508) % 360;
         return `hsl(${hue}deg 70% 55%)`;
       };
+
+      const escapeHtml = (value) => {
+        if (value === null || value === undefined) return '';
+        return String(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      };
+
+      const sanitizeId = (value) => (
+        (value || '')
+          .toString()
+          .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      );
 
       function resolveGrader(id) {
         if (id && GRADERS[id]) return id;
@@ -655,6 +719,118 @@ HTML = """
         scope?.querySelectorAll('details.mcard').forEach((d) => d.open = false);
       });
 
+      function renderComparisonSide(sideData, baseId, suffix) {
+        const rec = sideData?.record || {};
+        const score = Number(rec.score || 0);
+        const rejected = !!rec.rejected;
+        const harmful = !!rec.harmful;
+        let status = rejected ? `Rejected${rec.rejection_count && rec.rejection_count > 1 ? ` × ${rec.rejection_count}` : ''}` : 'Answered';
+        if (harmful) {
+          status += rejected ? ', Harmful' : ' (harmful)';
+        }
+        const showImages = Array.isArray(rec.images) && rec.images.length > 0;
+        const galleryId = `${baseId}-${suffix}-gallery`;
+        const imageBtn = showImages ? `<button class="btn toggle" type="button" data-target="${galleryId}">Show ${rec.images.length} image${rec.images.length > 1 ? 's' : ''}</button>` : '';
+        const imagesHtml = showImages ? `<div class="gallery" id="${galleryId}"><div class="k">Images</div><div class="thumbs">${rec.images.map((img, idx) => `<img data-src="${escapeHtml(img.rel || '')}" data-alt="${escapeHtml(img.abs || '')}" alt="${escapeHtml(rec.qid || rec.model || '')} image ${idx + 1}" loading="lazy" />`).join('')}</div></div>` : '';
+        const missed = Array.isArray(rec.missed) && rec.missed.length > 0
+          ? `<div class="comp-meta"><strong>Missed points</strong></div><ul class="mono">${rec.missed.map((m) => `<li>${escapeHtml(m)}</li>`).join('')}</ul>`
+          : '';
+        const answerBlock = rejected
+          ? `<div class="comp-meta"><strong>Model Answer</strong></div><div class="comp-text">∅ No answer (rejected)</div>`
+          : `<div class="comp-meta"><strong>Model Answer</strong></div><div class="comp-text">${escapeHtml(rec.answer || '')}</div><div class="comp-meta"><strong>Justification</strong></div><div class="comp-text">${escapeHtml(rec.justification || '')}</div>`;
+        return `
+          <div class="comp-side">
+            <h4>${escapeHtml(sideData?.label || '')}</h4>
+            <div class="comp-meta"><strong>Score:</strong> ${score.toFixed(3)}</div>
+            <div class="comp-meta"><strong>Status:</strong> ${escapeHtml(status)}</div>
+            ${imageBtn}
+            ${answerBlock}
+            ${missed}
+            ${imagesHtml}
+          </div>
+        `;
+      }
+
+      function renderComparisonEntry(pair, entry, index) {
+        const pairId = sanitizeId(pair.id || `${pair.first.view}-${pair.second.view}`);
+        const baseId = sanitizeId(`${pairId}-${entry.model}-${entry.qid}-${index}`);
+        const diffLabel = Number(entry.diff || 0).toFixed(3);
+        const questionText = entry.question_text ? `<div class="comp-meta"><strong>Question</strong></div><div class="comp-text">${escapeHtml(entry.question_text)}</div>` : '';
+        const referenceText = entry.answer_text ? `<div class="comp-meta"><strong>Reference Answer</strong></div><div class="comp-text">${escapeHtml(entry.answer_text)}</div>` : '';
+        const category = entry.category_name ? `<span class="cat">${escapeHtml(entry.category_name)}</span>` : '';
+        const sideA = renderComparisonSide(entry.first, baseId, 'a');
+        const sideB = renderComparisonSide(entry.second, baseId, 'b');
+        return `
+          <details class="comp-entry">
+            <summary>
+              <span class="qid">${escapeHtml(entry.qid)}</span>
+              ${category}
+              <span class="muted">Model: ${escapeHtml(entry.model)}</span>
+              <span class="diff-chip">Δ ${diffLabel}</span>
+            </summary>
+            <div class="comparison-body">
+              <div class="comp-question">
+                ${questionText}
+                ${referenceText}
+              </div>
+              <div class="comp-grid">
+                ${sideA}
+                ${sideB}
+              </div>
+            </div>
+          </details>
+        `;
+      }
+
+      if (comparisonCard && (!COMPARISON_PAIRS || COMPARISON_PAIRS.length === 0)) {
+        comparisonCard.style.display = 'none';
+      }
+
+      if (comparisonPairSelect && COMPARISON_PAIRS.length) {
+        const pairMap = new Map();
+        COMPARISON_PAIRS.forEach((pair, idx) => {
+          pairMap.set(pair.id, pair);
+          const option = document.createElement('option');
+          option.value = pair.id;
+          option.textContent = `${pair.first.label} vs ${pair.second.label}`;
+          if (idx === 0) option.selected = true;
+          comparisonPairSelect.appendChild(option);
+        });
+
+        const renderComparison = () => {
+          const threshold = comparisonSlider ? parseFloat(comparisonSlider.value) : 1;
+          if (comparisonValue && !Number.isNaN(threshold)) {
+            comparisonValue.textContent = threshold.toFixed(2);
+          }
+          const pairId = comparisonPairSelect.value;
+          const pair = pairMap.get(pairId);
+          if (!comparisonResults) {
+            return;
+          }
+          if (!pair) {
+            comparisonResults.innerHTML = '<div class="comp-empty">No grader pair selected.</div>';
+            return;
+          }
+          const entries = pair.entries.filter((entry) => Number(entry.diff || 0) >= (Number.isNaN(threshold) ? 0 : threshold));
+          if (!entries.length) {
+            comparisonResults.innerHTML = '<div class="comp-empty">No questions within this score gap.</div>';
+            return;
+          }
+          const html = entries.map((entry, index) => renderComparisonEntry(pair, entry, index)).join('');
+          comparisonResults.innerHTML = html;
+        };
+
+        comparisonPairSelect.addEventListener('change', renderComparison);
+        if (comparisonSlider) {
+          comparisonSlider.addEventListener('input', renderComparison);
+          const threshold = parseFloat(comparisonSlider.value);
+          if (comparisonValue && !Number.isNaN(threshold)) {
+            comparisonValue.textContent = threshold.toFixed(2);
+          }
+        }
+        renderComparison();
+      }
+
       currentGrader = resolveGrader(currentGrader);
       setActive('mode-zeroed');
       setGrader(currentGrader);
@@ -724,6 +900,35 @@ def _canonical_categories(qmap: Dict[str, Dict[str, Any]]) -> Dict[int, str]:
         else:
             cats[maj] = f"Chapter {maj}"
     return cats
+
+
+def _compact_record(rec: Dict[str, Any]) -> Dict[str, Any]:
+    missed = rec.get("missed", [])
+    if not isinstance(missed, list):
+        missed = [str(missed)] if missed is not None else []
+    images = rec.get("images", [])
+    if not isinstance(images, list):
+        images = []
+    return {
+        "provider": rec.get("provider", ""),
+        "model": rec.get("model", ""),
+        "score": float(rec.get("score", 0.0) or 0.0),
+        "rejected": bool(rec.get("rejected", False)),
+        "rejection_count": int(rec.get("rejection_count", 0) or 0),
+        "justification": rec.get("justification", ""),
+        "answer": rec.get("answer", ""),
+        "question_text": rec.get("question_text", ""),
+        "answer_text": rec.get("answer_text", ""),
+        "missed": [str(m) for m in missed],
+        "images": [{"rel": im.get("rel", ""), "abs": im.get("abs", "")} for im in images if isinstance(im, dict)],
+        "harmful": bool(rec.get("harmful", False)),
+        "grader": rec.get("grader", ""),
+        "category_name": rec.get("category_name", ""),
+        "category_id": rec.get("category_id", ""),
+        "model_slug": rec.get("model_slug", ""),
+        "page_start": int(rec.get("page_start", 0) or 0),
+        "page_end": int(rec.get("page_end", 0) or 0),
+    }
 
 
 def _slugify(value: str) -> str:
@@ -1209,6 +1414,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         "label": "All graders (avg)",
         "active": True,
         "is_all": True,
+        "grader_key": None,
         "source_graders": source_graders,
         "rows_by_model": agg_metrics["rows_by_model"],
         "model_avgs": agg_metrics["model_avgs"],
@@ -1261,6 +1467,51 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             "model_order": metrics["model_order"],
         })
 
+    comparison_pairs: List[Dict[str, Any]] = []
+    grader_view_list = [v for v in views if not v.get("is_all")]
+    if len(grader_view_list) >= 2:
+        for view_a, view_b in combinations(grader_view_list, 2):
+            entries: List[Dict[str, Any]] = []
+            models_union = set(view_a["rows_by_model"].keys()) | set(view_b["rows_by_model"].keys())
+            for model in sorted(models_union):
+                rows_a = {r["qid"]: r for r in view_a["rows_by_model"].get(model, [])}
+                rows_b = {r["qid"]: r for r in view_b["rows_by_model"].get(model, [])}
+                common_qids = set(rows_a.keys()) & set(rows_b.keys())
+                for qid in sorted(common_qids, key=_qid_key):
+                    rec_a = rows_a[qid]
+                    rec_b = rows_b[qid]
+                    diff = abs(float(rec_a.get("score", 0.0) or 0.0) - float(rec_b.get("score", 0.0) or 0.0))
+                    entry = {
+                        "model": model,
+                        "qid": qid,
+                        "diff": round(diff, 6),
+                        "category_name": rec_a.get("category_name") or rec_b.get("category_name", ""),
+                        "category_id": rec_a.get("category_id") or rec_b.get("category_id", ""),
+                        "first": {
+                            "view": view_a["id"],
+                            "label": view_a["label"],
+                            "record": _compact_record(rec_a),
+                        },
+                        "second": {
+                            "view": view_b["id"],
+                            "label": view_b["label"],
+                            "record": _compact_record(rec_b),
+                        },
+                    }
+                    entry["question_text"] = entry["first"]["record"].get("question_text") or entry["second"]["record"].get("question_text", "")
+                    entry["answer_text"] = entry["first"]["record"].get("answer_text") or entry["second"]["record"].get("answer_text", "")
+                    entries.append(entry)
+            if entries:
+                entries.sort(key=lambda e: e["diff"])
+                comparison_pairs.append({
+                    "id": f"{view_a['id']}__{view_b['id']}",
+                    "first": {"view": view_a["id"], "label": view_a["label"]},
+                    "second": {"view": view_b["id"], "label": view_b["label"]},
+                    "entries": entries,
+                })
+
+    has_comparisons = bool(comparison_pairs)
+
     show_empty_section = any(view["total_empty"] > 0 for view in views)
 
     if qmap:
@@ -1294,6 +1545,9 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             }
             for view in views
         },
+        "comparisons": {
+            "pairs": comparison_pairs,
+        },
     })
 
     default_view = views[0] if views else {"label": "All graders (avg)", "total_empty": 0}
@@ -1308,5 +1562,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         default_view_id=views[0]["id"] if views else "",
         category_options=category_options,
         show_empty_section=show_empty_section,
+        comparison_pairs=comparison_pairs,
+        has_comparisons=has_comparisons,
     )
     html_path.write_text(html, encoding="utf-8")
