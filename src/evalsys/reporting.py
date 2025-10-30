@@ -269,7 +269,7 @@ HTML = """
                         {% endif %}
                         {% if r.harmful %}<span class="scorechip score-bad">Harmful</span>{% endif %}
                         {% if r.images and r.images|length > 0 %}
-                          <button class="btn toggle" type="button" data-target="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
+                          <button class="btn toggle" type="button" data-target="img-{{ view.id }}-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
                         {% endif %}
                       </summary>
                       <div class="question"><div class="k">Question</div><div class="mono">{{ r.question_text }}</div></div>
@@ -288,7 +288,7 @@ HTML = """
                         </div></div>
                       {% endif %}
                       {% if r.images and r.images|length > 0 %}
-                        <div class="gallery" id="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">
+                        <div class="gallery" id="img-{{ view.id }}-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">
                           <div class="k">Images</div>
                           <div class="thumbs">
                             {% for im in r.images %}
