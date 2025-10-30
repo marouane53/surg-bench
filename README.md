@@ -87,12 +87,24 @@ This generates model responses in `data/out/runs/`
 
 ### 3. Grade Responses
 ```bash
+# run both default graders (GPT-5 Mini, then Gemini 2.5 Flash)
+python -m src.evalsys.cli grade --grader
+
+# or target a specific grader / list
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini,gemini:gemini-2.5-flash"
 ```
 This creates per-model CSVs in `data/out/graded/` and a unified report:
-- `scores__<model>.csv` for graded answers per model
-- `empty_answers__<model>.csv` for empty answers per model (if any)
+- `scores__<model>__<grader>.csv` for graded answers per model/grader pair
+- `empty_answers__<model>__<grader>.csv` for empty answers per model/grader pair (if any)
 - `report.html` combining all per-model results
+
+`--grader` accepts:
+
+- *No value* (flag only): runs GPT-5 Mini first, then Gemini 2.5 Flash sequentially.
+- `provider:model`: grades with a single grader (e.g. `openai:gpt-5-mini`).
+- Comma-separated list: grades once per entry in order (e.g. `openai:gpt-5-mini,gemini:gemini-2.5-flash`).
+- Literal `all`: identical to the flag-only shorthand.
 
 ## Reporting
 
@@ -138,7 +150,7 @@ The generated report includes:
 You can pause and resume both model runs and grading without losing progress. The CLI skips QIDs already completed and appends only new results, then refreshes the report.
 
 - `run --resume`: Skips QIDs already present in `data/out/runs/<provider>__<model>.jsonl` and appends new answers.
-- `grade --resume`: Skips QIDs already graded in `data/out/graded/scores__<model>.csv` or recorded as empty in `empty_answers__<model>.csv`, appends new rows, and regenerates `report.html`.
+- `grade --resume`: Skips QIDs already graded in `data/out/graded/scores__<model>__<grader>.csv` or recorded as empty in `empty_answers__<model>__<grader>.csv`, appends new rows, and regenerates `report.html`.
 
 Examples:
 
@@ -390,8 +402,8 @@ python -m tests.test_prompt_packing
 - `data/out/dataset.jsonl` - Extracted Q&A items
 - `data/out/images/` - Extracted images from PDF
 - `data/out/runs/*.jsonl` - Raw model responses
-- `data/out/graded/scores__<model>.csv` - Graded results per model
-- `data/out/graded/empty_answers__<model>.csv` - Empty answers per model (if any)
+- `data/out/graded/scores__<model>__<grader>.csv` - Graded results per model/grader pair
+- `data/out/graded/empty_answers__<model>__<grader>.csv` - Empty answers per model/grader pair (if any)
 - `data/out/graded/report.html` - Unified HTML report
 
 ## Architecture

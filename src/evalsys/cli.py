@@ -231,10 +231,18 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
         else:
             info(f"No new records to write for {provider_name}:{model}")
 
+_ALL_GRADERS_SENTINEL = "__ALL_GRADERS__"
+
+
 @app.command()
 def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
           runs_dir: str = typer.Option("data/out/runs"),
-          grader: str = typer.Option("openai:gpt-5-mini", help="openai:gpt-5-mini or gemini:gemini-2.5-flash"),
+          grader: Optional[str] = typer.Option(
+              None,
+              "--grader",
+              help="Target grader(s). Provide provider:model, a comma-separated list, or pass --grader with no value to run GPT-5 Mini and Gemini 2.5 Flash sequentially.",
+              flag_value=_ALL_GRADERS_SENTINEL,
+          ),
           out_dir: str = typer.Option("data/out/graded"),
           label: Optional[str] = typer.Option(None, help="Optional label to append to model names in outputs, e.g., 'chat' or 'minimal'"),
           resume: bool = typer.Option(True, help="Resume grading: skip QIDs already graded or recorded as empty and append new results")):
@@ -242,135 +250,157 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
     _load_env_file()
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     items = {it.qid: it for it in _load_dataset(dataset)}
-    # grader
-    if grader.startswith("openai:"):
-        g = OpenAIGrader(model=grader.split(":",1)[1])
-    else:
-        g = GeminiGrader(model=grader.split(":",1)[1])
 
-    # Preload existing graded QIDs and empty QIDs if resuming
-    existing_graded: Dict[tuple[str, str], set] = {}
-    existing_empty: Dict[tuple[str, str], set] = {}
-    if resume:
-        for fp in Path(out_dir).glob("scores__*.csv"):
-            try:
-                df_prev = pd.read_csv(fp)
-            except Exception:
-                continue
-            for _, row in df_prev.iterrows():
-                m = str(row.get("model", ""))
-                q = str(row.get("qid", ""))
-                grader_name = str(row.get("grader", "")) or "__unknown__"
-                if m and q:
-                    existing_graded.setdefault((m, grader_name), set()).add(q)
-        for fp in Path(out_dir).glob("empty_answers__*.csv"):
-            try:
-                df_prev = pd.read_csv(fp)
-            except Exception:
-                continue
-            for _, row in df_prev.iterrows():
-                m = str(row.get("model", ""))
-                q = str(row.get("qid", ""))
-                grader_name = str(row.get("grader", "")) or "__unknown__"
-                if m and q:
-                    existing_empty.setdefault((m, grader_name), set()).add(q)
+    def _resolve_graders(raw: Optional[str]) -> List[str]:
+        if not raw or raw.strip() == "":
+            return ["openai:gpt-5-mini"]
+        if raw == _ALL_GRADERS_SENTINEL:
+            return ["openai:gpt-5-mini", "gemini:gemini-2.5-flash"]
+        raw_lower = raw.strip().lower()
+        if raw_lower == "all":
+            return ["openai:gpt-5-mini", "gemini:gemini-2.5-flash"]
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        return parts if parts else ["openai:gpt-5-mini"]
 
-    # Accumulate per-model rows (new work only)
-    rows_by_model: Dict[tuple[str, str], list] = {}
-    empty_by_model: Dict[tuple[str, str], list] = {}
-    for path in Path(runs_dir).glob("*.jsonl"):
-        prov, model_slug = path.stem.split("__", 1)
-        model = model_slug.replace("_", "/")
-        for line in path.read_text(encoding="utf-8").splitlines():
-            r = ModelResponse.model_validate_json(line)
-            it = items[r.qid]
+    grader_specs = _resolve_graders(grader)
 
-            # Check if this is an empty answer (either marked or truly empty)
-            is_empty = getattr(r, 'is_empty_answer', False) or not (r.answer and r.answer.strip())
-
-            if is_empty:
-                model_key = f"{r.model} [{label}]" if label else r.model
-                grader_name = g.name
-                # Skip if already recorded as empty
-                if resume and r.qid in existing_empty.get((model_key, grader_name), set()):
-                    info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid}")
-                    continue
-                empty_by_model.setdefault((model_key, grader_name), []).append({
-                    "provider": r.provider,
-                    "model": model_key,
-                    "qid": r.qid,
-                    "retry_attempts": getattr(r, 'retry_attempts', 0),
-                    "grader": grader_name,
-                })
-                info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid}")
-                continue
-
-            # Grade non-empty answers normally (concise progress)
-            info(f"Grading {r.provider}:{r.model} {r.qid}")
-            # Skip if already graded
-            model_key = f"{r.model} [{label}]" if label else r.model
-            if resume and r.qid in existing_graded.get((model_key, g.name), set()):
-                info(f"Already graded {r.provider}:{model_key} {r.qid}; skipping")
-                continue
-            prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
-            try:
-                score, just, missed, harmful = g.grade(prompt)
-            except Exception as e:
-                warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
-                continue
-            info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f}")
-            gr = GradedResponse(provider=r.provider, model=model_key, qid=r.qid, answer=r.answer,
-                                grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
-            row_payload = gr.model_dump()
-            row_payload["grader"] = g.name
-            rows_by_model.setdefault((model_key, g.name), []).append(row_payload)
-
-    # Write per-model CSVs
     def _slug(s: str) -> str:
         return s.replace('/', '_')
 
-    total_rows = 0
-    total_empties = 0
-    for (model, grader_name), rows in rows_by_model.items():
-        grader_slug = _slug(grader_name)
-        csv_path = Path(out_dir) / f"scores__{_slug(model)}__{grader_slug}.csv"
-        df_new = pd.DataFrame(rows)
-        if resume and csv_path.exists():
-            try:
-                df_prev = pd.read_csv(csv_path)
-                # Merge and drop duplicates by qid (keep previous first)
-                df_all = pd.concat([df_prev, df_new], ignore_index=True)
-                df_all = df_all.drop_duplicates(subset=["qid"], keep="first")
-            except Exception:
-                df_all = df_new
+    def run_for_spec(grader_spec: str) -> None:
+        if ":" not in grader_spec:
+            error(f"Grader spec '{grader_spec}' must be provider:model")
+            return
+        provider_name, model_name = grader_spec.split(":", 1)
+        provider_name = provider_name.strip()
+        model_name = model_name.strip()
+        if not provider_name or not model_name:
+            error(f"Invalid grader spec '{grader_spec}'")
+            return
+
+        if provider_name == "openai":
+            g = OpenAIGrader(model=model_name)
+        elif provider_name == "gemini":
+            g = GeminiGrader(model=model_name)
         else:
-            df_all = df_new
-        df_all.to_csv(csv_path, index=False)
-        total_rows += len(df_new)
-        info(f"Wrote {csv_path} ({len(df_new)} new rows)")
+            error(f"Unknown grader provider '{provider_name}'")
+            return
 
-    for (model, grader_name), rows in empty_by_model.items():
-        if rows:
-            grader_slug = _slug(grader_name)
-            empty_path = Path(out_dir) / f"empty_answers__{_slug(model)}__{grader_slug}.csv"
-            empty_df_new = pd.DataFrame(rows)
-            if resume and empty_path.exists():
+        # Preload existing graded QIDs and empty QIDs if resuming
+        existing_graded: Dict[tuple[str, str], set] = {}
+        existing_empty: Dict[tuple[str, str], set] = {}
+        if resume:
+            for fp in Path(out_dir).glob("scores__*.csv"):
                 try:
-                    empty_prev = pd.read_csv(empty_path)
-                    empty_all = pd.concat([empty_prev, empty_df_new], ignore_index=True)
-                    empty_all = empty_all.drop_duplicates(subset=["qid"], keep="first")
+                    df_prev = pd.read_csv(fp)
                 except Exception:
-                    empty_all = empty_df_new
+                    continue
+                for _, row in df_prev.iterrows():
+                    m = str(row.get("model", ""))
+                    q = str(row.get("qid", ""))
+                    grader_name = str(row.get("grader", "")) or "__unknown__"
+                    if m and q:
+                        existing_graded.setdefault((m, grader_name), set()).add(q)
+            for fp in Path(out_dir).glob("empty_answers__*.csv"):
+                try:
+                    df_prev = pd.read_csv(fp)
+                except Exception:
+                    continue
+                for _, row in df_prev.iterrows():
+                    m = str(row.get("model", ""))
+                    q = str(row.get("qid", ""))
+                    grader_name = str(row.get("grader", "")) or "__unknown__"
+                    if m and q:
+                        existing_empty.setdefault((m, grader_name), set()).add(q)
+
+        rows_by_model: Dict[tuple[str, str], list] = {}
+        empty_by_model: Dict[tuple[str, str], list] = {}
+        for path in Path(runs_dir).glob("*.jsonl"):
+            prov, model_slug = path.stem.split("__", 1)
+            model = model_slug.replace("_", "/")
+            for line in path.read_text(encoding="utf-8").splitlines():
+                r = ModelResponse.model_validate_json(line)
+                it = items[r.qid]
+
+                is_empty = getattr(r, 'is_empty_answer', False) or not (r.answer and r.answer.strip())
+
+                model_key = f"{r.model} [{label}]" if label else r.model
+                grader_name = g.name
+
+                if is_empty:
+                    if resume and r.qid in existing_empty.get((model_key, grader_name), set()):
+                        info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid}")
+                        continue
+                    empty_by_model.setdefault((model_key, grader_name), []).append({
+                        "provider": r.provider,
+                        "model": model_key,
+                        "qid": r.qid,
+                        "retry_attempts": getattr(r, 'retry_attempts', 0),
+                        "grader": grader_name,
+                    })
+                    info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid}")
+                    continue
+
+                info(f"Grading {r.provider}:{r.model} {r.qid}")
+                if resume and r.qid in existing_graded.get((model_key, g.name), set()):
+                    info(f"Already graded {r.provider}:{model_key} {r.qid}; skipping")
+                    continue
+                prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
+                try:
+                    score, just, missed, harmful = g.grade(prompt)
+                except Exception as e:
+                    warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
+                    continue
+                info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f}")
+                gr = GradedResponse(provider=r.provider, model=model_key, qid=r.qid, answer=r.answer,
+                                    grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
+                row_payload = gr.model_dump()
+                row_payload["grader"] = g.name
+                rows_by_model.setdefault((model_key, g.name), []).append(row_payload)
+
+        total_rows = 0
+        total_empties = 0
+        for (model, grader_name), rows in rows_by_model.items():
+            grader_slug = _slug(grader_name)
+            csv_path = Path(out_dir) / f"scores__{_slug(model)}__{grader_slug}.csv"
+            df_new = pd.DataFrame(rows)
+            if resume and csv_path.exists():
+                try:
+                    df_prev = pd.read_csv(csv_path)
+                    df_all = pd.concat([df_prev, df_new], ignore_index=True)
+                    df_all = df_all.drop_duplicates(subset=["qid"], keep="first")
+                except Exception:
+                    df_all = df_new
             else:
-                empty_all = empty_df_new
-            empty_all.to_csv(empty_path, index=False)
-            total_empties += len(rows)
-            info(f"Wrote empty answer stats to {empty_path} ({len(rows)} new)")
+                df_all = df_new
+            df_all.to_csv(csv_path, index=False)
+            total_rows += len(df_new)
+            info(f"Wrote {csv_path} ({len(df_new)} new rows)")
 
-    if total_rows + total_empties > 0:
-        info(f"Empty answers: {total_empties}/{total_rows + total_empties} ({(total_empties/(total_rows+total_empties))*100:.1f}%)")
+        for (model, grader_name), rows in empty_by_model.items():
+            if rows:
+                grader_slug = _slug(grader_name)
+                empty_path = Path(out_dir) / f"empty_answers__{_slug(model)}__{grader_slug}.csv"
+                empty_df_new = pd.DataFrame(rows)
+                if resume and empty_path.exists():
+                    try:
+                        empty_prev = pd.read_csv(empty_path)
+                        empty_all = pd.concat([empty_prev, empty_df_new], ignore_index=True)
+                        empty_all = empty_all.drop_duplicates(subset=["qid"], keep="first")
+                    except Exception:
+                        empty_all = empty_df_new
+                else:
+                    empty_all = empty_df_new
+                empty_all.to_csv(empty_path, index=False)
+                total_empties += len(rows)
+                info(f"Wrote empty answer stats to {empty_path} ({len(rows)} new)")
 
-    # Unified report from per-model CSVs
+        if total_rows + total_empties > 0:
+            info(f"Empty answers: {total_empties}/{total_rows + total_empties} ({(total_empties/(total_rows+total_empties))*100:.1f}%)")
+
+    for spec in grader_specs:
+        run_for_spec(spec)
+
     from .reporting import emit_report
     html_path = Path(out_dir) / "report.html"
     emit_report(Path(out_dir), html_path, Path(dataset), Path(out_dir))
