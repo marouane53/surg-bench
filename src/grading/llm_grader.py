@@ -38,16 +38,16 @@ class OpenAIGrader(Grader):
         instructions = ""
         input_messages: List[Dict[str, Any]] = []
         # Ensure strict JSON-only instruction comes first
-        instructions_parts: List[str] = ["Return a json object only."]
+        instructions_parts: List[str] = ["Return a JSON object only."]
         for m in prompt.get("messages", []):
             role = m.get("role")
             if role == "system":
                 instructions_parts.append(str(m.get("content") or ""))
-            elif role == "user":
+            elif role in {"user", "assistant"}:
                 content = m.get("content")
                 if isinstance(content, str):
                     input_messages.append({
-                        "role": "user",
+                        "role": role,
                         "content": [{"type": "input_text", "text": content}],
                     })
                 elif isinstance(content, list):
@@ -61,7 +61,7 @@ class OpenAIGrader(Grader):
                             if url:
                                 converted.append({"type": "input_image", "image_url": url})
                     if converted:
-                        input_messages.append({"role": "user", "content": converted})
+                        input_messages.append({"role": role, "content": converted})
         instructions = "\n".join(p for p in instructions_parts if p.strip())
         return input_messages, instructions
 
@@ -186,18 +186,37 @@ class OpenAIGrader(Grader):
         if str(model).startswith("gpt-5"):
             # Responses API path (recommended for GPT‑5)
             input_messages, instructions = self._msgs_to_responses(prompt)
+            if not input_messages:
+                # Fallback to concatenated user/assistant text if helper could not map structured content
+                combined = []
+                for msg in prompt.get("messages", []):
+                    role = msg.get("role")
+                    if role not in {"user", "assistant"}:
+                        continue
+                    content = msg.get("content")
+                    if isinstance(content, str) and content.strip():
+                        combined.append(content.strip())
+                    elif isinstance(content, list):
+                        parts = []
+                        for part in content:
+                            if part.get("type") == "text" and part.get("text"):
+                                parts.append(part["text"])
+                        if parts:
+                            combined.append("\n".join(parts))
+                if combined:
+                    input_messages = [{
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "\n\n".join(combined)}]
+                    }]
             params: Dict[str, Any] = {
                 "model": model,
                 "input": input_messages,
-                "instructions": instructions,
                 "max_output_tokens": 900,
                 "reasoning": {"effort": "minimal"},
-                "text": {
-                    "format": {"type": "json_object"},
-                    "verbosity": "low"
-                },
-                # Reasoning effort not strictly needed for grading; keep default
+                "text": {"format": {"type": "json_object"}},
             }
+            if instructions:
+                params["instructions"] = instructions
             max_tokens = params["max_output_tokens"]
             for attempt in range(int(os.getenv("GRADER_MAX_ATTEMPTS", "3"))):
                 resp_dict, raw = self._invoke_responses(params)

@@ -36,6 +36,11 @@ python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effo
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 #### Medium Reasoning Effort
 **Run 20 questions:**
 ```bash
@@ -50,6 +55,11 @@ python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --reasoning-effo
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ### GPT-5 (Chat Mode)
@@ -68,6 +78,11 @@ python -m src.evalsys.cli run --models "openai:gpt-5"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ### GPT-5 Mini
 **Run 20 questions:**
 ```bash
@@ -84,6 +99,11 @@ python -m src.evalsys.cli run --models "openai:gpt-5-mini"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ### GPT-4o
 **Run 20 questions:**
 ```bash
@@ -98,6 +118,11 @@ python -m src.evalsys.cli run --models "openai:gpt-4o"
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ---
@@ -118,6 +143,11 @@ python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash-lite"
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ### Gemini 2.5 Flash
@@ -157,6 +187,11 @@ python -m src.evalsys.cli run --models "gemini:gemini-2.5-pro"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ---
 
 ## Anthropic Models
@@ -177,6 +212,11 @@ python -m src.evalsys.cli run --models "anthropic:claude-sonnet-4-5-20250929"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ### Claude Opus 4.1
 **Run 20 questions:**
 ```bash
@@ -191,6 +231,11 @@ python -m src.evalsys.cli run --models "anthropic:claude-opus-4-1-20250805"
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ---
@@ -213,6 +258,11 @@ python -m src.evalsys.cli run --models "groq:llama-3.3-70b-versatile"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ### Llama 3 8B
 **Run 20 questions:**
 ```bash
@@ -227,6 +277,11 @@ python -m src.evalsys.cli run --models "groq:llama3-8b-8192"
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ---
@@ -249,6 +304,11 @@ python -m src.evalsys.cli run --models "xai:grok-beta"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ---
 
 ## OpenRouter Models
@@ -267,6 +327,11 @@ python -m src.evalsys.cli run --models "openrouter:openai/gpt-4o"
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ---
@@ -291,6 +356,11 @@ python -m src.evalsys.cli run --models "mistral:mistral-small-latest"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ---
 
 ## Cohere Models (⚠️ Currently Disabled)
@@ -311,6 +381,11 @@ python -m src.evalsys.cli run --models "cohere:command-a-03-2025"
 **Grade the results:**
 ```bash
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
 ---

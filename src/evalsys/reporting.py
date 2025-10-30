@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 from typing import List, Dict, Any, Optional, Tuple, Set
 from jinja2 import Template
-import json, ast, os, re
+import json, ast, os, re, copy, math
 from collections import defaultdict, Counter
 
 HTML = """
@@ -29,7 +29,6 @@ HTML = """
       --chip: #eef2ff;
       --chip-text: #2d3a86;
     }
-    /* Dark theme overrides */
     [data-theme='dark'] {
       --bg: #0f1220;
       --panel: #171a2b;
@@ -56,23 +55,21 @@ HTML = """
     .card .hd { padding: 14px 16px; border-bottom: 1px solid #262b49; display:flex; align-items:center; justify-content:space-between; gap:10px; }
     .card .bd { padding: 16px; }
 
-    /* Buttons & chips */
+    .card.note { border-style: dashed; background: var(--panel-2); }
+
     .controls { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
     .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid #cfd6ff33; background: var(--chip); color: var(--chip-text); cursor: pointer; font-size: 12px; }
     .btn:hover { filter: brightness(1.03); }
     .btn.active { outline: 2px solid var(--accent); }
     select, option { font-size: 12px; padding: 6px 10px; border-radius: 8px; background: var(--panel-2); color: var(--text); border:1px solid #2b3156; }
 
-    /* Chart area: ranked bar chart */
     #chartWrap { position: relative; }
     #scoreCanvas { width: 100%; height: 360px; display:block; }
     .tooltip { position: absolute; pointer-events:none; background:#0d1022; color:#dce1ff; border:1px solid #2b3156; padding:8px 10px; border-radius:8px; font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); display:none; z-index: 10; }
 
-    /* Q&A sections */
     .sect { margin-top: 22px; }
     .sect h2 { font-size: 16px; margin: 0 0 10px 0; font-weight: 600; color: #dce1ff; }
 
-    /* Model-level collapsible */
     details.mcard { border: 1px solid #262b49; border-radius: 12px; margin: 12px 0; background: #151a30; }
     details.mcard > summary { list-style:none; cursor:pointer; padding: 12px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
     details.mcard > summary::-webkit-details-marker { display:none; }
@@ -81,7 +78,6 @@ HTML = """
     .muted { color: var(--muted); }
     .avg-badge { padding: 4px 8px; border-radius: 999px; background:#1a2145; border: 1px solid #2e3867; font-size: 12px; color:#c8d2ff; }
 
-    .qcard { border-top: 1px solid #262b49; padding: 12px 0; }
     details.qd { background: #151a30; border: 1px solid #262b49; border-radius: 10px; margin: 10px 0; }
     details.qd summary { list-style: none; cursor: pointer; padding: 12px 14px; display:flex; align-items:center; gap:10px; }
     details.qd summary::-webkit-details-marker { display:none; }
@@ -102,15 +98,17 @@ HTML = """
     .toggle { margin-left:auto; }
 
     a, button { color: inherit; }
-    /* Hide rejected QID details when excluding rejections */
-    .hide-rejects details.qd.rejected { display: none; }
 
-    /* Category table */
     table.cat { width: 100%; border-collapse: collapse; }
     table.cat th, table.cat td { border-bottom: 1px solid #262b49; padding: 8px 10px; text-align: left; font-size: 12px; }
     table.cat tbody tr { border-left: 4px solid transparent; transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, filter 0.2s ease; }
     table.cat tbody tr td { transition: color 0.25s ease; }
     table.cat tbody tr:hover { filter: brightness(1.05); }
+
+    .empty-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+    .empty-card { padding: 8px 12px; background: var(--panel-2); border-radius: 8px; border: 1px solid var(--grid); }
+
+    .view-block { width: 100%; }
   </style>
 </head>
 <body>
@@ -118,12 +116,20 @@ HTML = """
     <header>
       <h1>Surgical Benchmark</h1>
       <div class="actions">
-        <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: {{ grader_name }}{% if total_empty > 0 %} · Empty answers: {{ total_empty }}{% endif %}</div>
+        <div class="meta">Questions: {{ total }} · Models: {{ models|length }} · Grader: <span id="metaGrader">{{ default_view.label }}</span><span id="metaEmpty">{% if default_view.total_empty > 0 %} · Empty answers: {{ default_view.total_empty }}{% endif %}</span></div>
+        <label style="display:flex; align-items:center; gap:6px;">
+          <span class="muted">Grader</span>
+          <select id="graderSelect">
+            {% for view in views %}
+              <option value="{{ view.id }}" {% if view.active %}selected{% endif %}>{{ view.label }}</option>
+            {% endfor %}
+          </select>
+        </label>
         <label style="display:flex; align-items:center; gap:6px;">
           <span class="muted">Category</span>
           <select id="categorySelect">
             <option value="">All</option>
-            {% for cat in categories %}
+            {% for cat in category_options %}
               <option value="{{ cat.id }}">{{ cat.id }} · {{ cat.name }}</option>
             {% endfor %}
           </select>
@@ -134,7 +140,6 @@ HTML = """
       </div>
     </header>
 
-    <!-- Scores Chart Card -->
     <section class="card" id="chartCard">
       <div class="hd">
         <div class="controls">
@@ -153,136 +158,171 @@ HTML = """
       </div>
     </section>
 
-    {% if total_empty > 0 %}
-    <!-- Empty Answers Summary -->
-    <section class="card" style="margin:12px 0;">
+    {% if show_empty_section %}
+    <section class="card" id="emptySummary">
       <div class="hd">
         <strong>Empty Answers Summary</strong>
-        <div class="muted">{{ total_empty }} empty answers not included in scoring</div>
+        <div class="muted">Empty submissions tracked per grader</div>
       </div>
       <div class="bd">
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
-          {% for model, count in empty_stats.items() %}
-            <div style="padding: 8px 12px; background: var(--panel-2); border-radius: 8px; border: 1px solid var(--grid);">
-              <div style="font-weight: 600;">{{ model }}</div>
-              <div class="muted">{{ count }} empty answer{{ 's' if count > 1 else '' }}</div>
-            </div>
-          {% endfor %}
-        </div>
+        {% for view in views %}
+          <div class="view-block" data-grader-view="{{ view.id }}" data-section="empty" {% if not view.active %}style="display:none"{% endif %}>
+            {% if view.total_empty > 0 %}
+              <div class="empty-grid">
+                {% for model, count in view.empty_stats|dictsort %}
+                  <div class="empty-card">
+                    <div style="font-weight: 600;">{{ model }}</div>
+                    <div class="muted">{{ count }} empty answer{{ 's' if count != 1 else '' }}</div>
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="muted">No empty answers recorded for this grader.</div>
+            {% endif %}
+          </div>
+        {% endfor %}
       </div>
     </section>
     {% endif %}
 
-    <!-- Category Breakdown -->
-    <section class="card" style="margin:12px 0;">
+    <section class="card" id="categoryCard" style="margin:12px 0;">
       <div class="hd">
         <strong>By Category</strong>
         <div class="muted">Averages per category (answered-only and zeroed)</div>
       </div>
       <div class="bd">
-        {% for cat in categories %}
-          <details class="qd">
-            <summary>
-              <span class="qid">{{ "Q" ~ cat.id ~ ".x" }}</span>
-              <span class="cat">{{ cat.name }}</span>
-              <span class="muted">Questions: {{ cat.total_qs }}</span>
-            </summary>
-            <div class="answer">
-              <table class="cat">
-                <thead>
-                  <tr><th>Model</th><th>Provider</th><th>Avg (answered)</th><th>Avg (zeroed)</th><th>Answered</th><th>Rejects</th><th>Total</th></tr>
-                </thead>
-                <tbody>
-                {% for row in cat.model_rows %}
-                  <tr data-score="{{ "%.4f"|format(row.avg_zeroed) }}">
-                    <td>{{ row.model }}</td>
-                    <td class="muted">{{ row.provider }}</td>
-                    <td>{{ "%.3f"|format(row.avg_answered) }}</td>
-                    <td>{{ "%.3f"|format(row.avg_zeroed) }}</td>
-                    <td>{{ row.n_answered }}</td>
-                    <td>{{ row.n_reject }}</td>
-                    <td>{{ row.n_total }}</td>
-                  </tr>
-                {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          </details>
+        {% for view in views %}
+          <div class="view-block" data-grader-view="{{ view.id }}" data-section="categories" {% if not view.active %}style="display:none"{% endif %}>
+            {% if view.categories %}
+              {% for cat in view.categories %}
+                <details class="qd">
+                  <summary>
+                    <span class="qid">{{ "Q" ~ cat.id ~ ".x" }}</span>
+                    <span class="cat">{{ cat.name }}</span>
+                    <span class="muted">Questions: {{ cat.total_qs }}</span>
+                  </summary>
+                  <div class="answer">
+                    <table class="cat">
+                      <thead>
+                        <tr><th>Model</th><th>Provider</th><th>Avg (answered)</th><th>Avg (zeroed)</th><th>Answered</th><th>Rejects</th><th>Total</th></tr>
+                      </thead>
+                      <tbody>
+                      {% for row in cat.model_rows %}
+                        <tr data-score="{{ "%.4f"|format(row.avg_zeroed) }}">
+                          <td>{{ row.model }}</td>
+                          <td class="muted">{{ row.provider }}</td>
+                          <td>{{ "%.3f"|format(row.avg_answered) }}</td>
+                          <td>{{ "%.3f"|format(row.avg_zeroed) }}</td>
+                          <td>{{ row.n_answered }}</td>
+                          <td>{{ row.n_reject }}</td>
+                          <td>{{ row.n_total }}</td>
+                        </tr>
+                      {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              {% endfor %}
+            {% else %}
+              <div class="muted">No category statistics for this grader yet.</div>
+            {% endif %}
+          </div>
         {% endfor %}
       </div>
     </section>
 
-    <!-- Q&A Details -->
     <section class="sect">
       <h2>Per-Question Details</h2>
-      {% for model_name, rows in rows_by_model.items() %}
-      <details class="mcard">
-        <summary>
-          <div class="hdr-left">
-            <span class="model-name">{{ model_name }}</span>
-            <span class="muted">Provider: {{ rows[0].provider }}</span>
-          </div>
-          <span class="avg-badge">Average: {{ "%.3f"|format(model_avgs[model_name]) }}</span>
-        </summary>
-        <div class="bd">
-          {% for r in rows %}
-            {% set bucket = 'score-ok' if r.score >= 0.7 else ('score-warn' if r.score >= 0.4 else 'score-bad') %}
-            <details class="qd {{ 'rejected' if r.rejected else '' }}" data-cat="{{ r.category_id }}">
-              <summary>
-                <span class="qid">{{ r.qid }}</span>
-                <span class="cat">{{ r.category_name }}</span>
-                <span class="muted">page {{ r.page_start }}–{{ r.page_end }}</span>
-                {% if r.rejected %}
-                  <span class="scorechip score-bad">Rejected</span>
-                {% else %}
-                  <span class="scorechip {{ bucket }}">Score: {{ "%.3f"|format(r.score) }}</span>
-                {% endif %}
-                {% if r.harmful %}<span class="scorechip score-bad">Harmful</span>{% endif %}
-                {% if r.images and r.images|length > 0 %}
-                  <button class="btn toggle" type="button" data-target="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
-                {% endif %}
-              </summary>
-              <div class="question"><div class="k">Question</div><div class="mono">{{ r.question_text }}</div></div>
-              {% if r.answer_text %}<div class="answer"><div class="k">Reference Answer</div><div class="mono">{{ r.answer_text }}</div></div>{% endif %}
-              {% if r.rejected %}
-                <div class="answer"><div class="k">Model Answer</div><div class="mono">∅ No answer (rejected)</div></div>
-              {% else %}
-                <div class="answer"><div class="k">Model Answer</div><div class="mono">{{ r.answer }}</div></div>
-                <div class="just"><div class="k">Justification</div><div class="mono">{{ r.justification }}</div></div>
-              {% endif %}
-              {% if r.missed and r.missed|length>0 %}
-                <div class="kv"><div class="k">Missed points</div><div>
-                  <ul>
-                    {% for m in r.missed %}<li class="mono">{{ m }}</li>{% endfor %}
-                  </ul>
-                </div></div>
-              {% endif %}
-              {% if r.images and r.images|length > 0 %}
-                <div class="gallery" id="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">
-                  <div class="k">Images</div>
-                  <div class="thumbs">
-                    {% for im in r.images %}
-                      <img data-src="{{ im.rel }}" data-alt="{{ im.abs }}" alt="{{ r.qid }} image {{ loop.index }}" loading="lazy" />
-                    {% endfor %}
+      {% for view in views %}
+        <div class="view-block" data-grader-view="{{ view.id }}" data-section="questions" {% if not view.active %}style="display:none"{% endif %}>
+          {% if view.is_all %}
+            <div class="card note">
+              <div class="bd">
+                <p>This view shows averages across all graders ({{ view.source_graders|join(', ') }}).</p>
+                <p class="muted">Select a specific grader from the dropdown above to inspect model answers and rationales.</p>
+              </div>
+            </div>
+          {% elif view.model_order %}
+            {% for model_name in view.model_order %}
+              {% set rows = view.rows_by_model.get(model_name, []) %}
+              {% if rows %}
+              <details class="mcard">
+                <summary>
+                  <div class="hdr-left">
+                    <span class="model-name">{{ model_name }}</span>
+                    <span class="muted">Provider: {{ view.provider_by_model.get(model_name, "") }}</span>
                   </div>
+                  <span class="avg-badge">Average: {{ "%.3f"|format(view.model_avgs.get(model_name, 0.0)) }}</span>
+                </summary>
+                <div class="bd">
+                  {% for r in rows %}
+                    {% set bucket = 'score-ok' if r.score >= 0.7 else ('score-warn' if r.score >= 0.4 else 'score-bad') %}
+                    <details class="qd {{ 'rejected' if r.rejected else '' }}" data-cat="{{ r.category_id }}">
+                      <summary>
+                        <span class="qid">{{ r.qid }}</span>
+                        <span class="cat">{{ r.category_name }}</span>
+                        <span class="muted">page {{ r.page_start }}–{{ r.page_end }}</span>
+                        {% if r.rejected %}
+                          <span class="scorechip score-bad">Rejected{% if r.rejection_count and r.rejection_count > 1 %} × {{ r.rejection_count }}{% endif %}</span>
+                        {% else %}
+                          <span class="scorechip {{ bucket }}">Score: {{ "%.3f"|format(r.score) }}</span>
+                        {% endif %}
+                        {% if r.harmful %}<span class="scorechip score-bad">Harmful</span>{% endif %}
+                        {% if r.images and r.images|length > 0 %}
+                          <button class="btn toggle" type="button" data-target="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
+                        {% endif %}
+                      </summary>
+                      <div class="question"><div class="k">Question</div><div class="mono">{{ r.question_text }}</div></div>
+                      {% if r.answer_text %}<div class="answer"><div class="k">Reference Answer</div><div class="mono">{{ r.answer_text }}</div></div>{% endif %}
+                      {% if r.rejected %}
+                        <div class="answer"><div class="k">Model Answer</div><div class="mono">∅ No answer (rejected)</div></div>
+                      {% else %}
+                        <div class="answer"><div class="k">Model Answer</div><div class="mono">{{ r.answer }}</div></div>
+                        <div class="just"><div class="k">Justification</div><div class="mono">{{ r.justification }}</div></div>
+                      {% endif %}
+                      {% if r.missed and r.missed|length>0 %}
+                        <div class="kv"><div class="k">Missed points</div><div>
+                          <ul>
+                            {% for m in r.missed %}<li class="mono">{{ m }}</li>{% endfor %}
+                          </ul>
+                        </div></div>
+                      {% endif %}
+                      {% if r.images and r.images|length > 0 %}
+                        <div class="gallery" id="img-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">
+                          <div class="k">Images</div>
+                          <div class="thumbs">
+                            {% for im in r.images %}
+                              <img data-src="{{ im.rel }}" data-alt="{{ im.abs }}" alt="{{ r.qid }} image {{ loop.index }}" loading="lazy" />
+                            {% endfor %}
+                          </div>
+                        </div>
+                      {% endif %}
+                      <div class="kv"><div class="k">Provider/Model</div><div>{{ r.provider }} / {{ r.model }}</div></div>
+                      <div class="kv"><div class="k">Grader</div><div>{{ r.grader }}</div></div>
+                    </details>
+                  {% endfor %}
                 </div>
+              </details>
               {% endif %}
-              <div class="kv"><div class="k">Provider/Model</div><div>{{ r.provider }} / {{ r.model }}</div></div>
-              <div class="kv"><div class="k">Grader</div><div>{{ r.grader }}</div></div>
-            </details>
-          {% endfor %}
+            {% endfor %}
+          {% else %}
+            <div class="card note">
+              <div class="bd">
+                <p class="muted">No graded questions available for this grader yet.</p>
+              </div>
+            </div>
+          {% endif %}
         </div>
-      </details>
       {% endfor %}
     </section>
 
     <script id="report-data" type="application/json">{{ data_json | safe }}</script>
+
     <script>
       const DATA = JSON.parse(document.getElementById('report-data').textContent);
       const canvas = document.getElementById('scoreCanvas');
       const ctx = canvas.getContext('2d');
       const DPR = window.devicePixelRatio || 1;
-      // scale for crisp lines on retina
       canvas.width = canvas.clientWidth * DPR;
       canvas.height = canvas.clientHeight * DPR;
       ctx.scale(DPR, DPR);
@@ -292,29 +332,43 @@ HTML = """
       const innerW = W - PADDING.l - PADDING.r;
       const innerH = H - PADDING.t - PADDING.b;
 
-      const qids = DATA.meta.qids;
-      const models = DATA.meta.models;
-      const totalQuestions = DATA.meta.total_questions;
       const categories = DATA.meta.categories || [];
+      const GRADERS = DATA.graders || {};
+      const ORDER = DATA.order || Object.keys(GRADERS);
+      let currentGrader = DATA.default || (ORDER.length ? ORDER[0] : null);
+      let currentCat = '';
+      let mode = 'zeroed';
+
+      let barsScore = [];
+      let barsZeroed = [];
+      let barsReject = [];
+
+      const tip = document.getElementById('tip');
+      const graderSelect = document.getElementById('graderSelect');
+      const catSelect = document.getElementById('categorySelect');
+      const titleEl = document.getElementById('chartTitle');
+      const hintEl = document.getElementById('chartHint');
+      const metaGraderEl = document.getElementById('metaGrader');
+      const metaEmptyEl = document.getElementById('metaEmpty');
+
       const colorForIdx = (i) => {
-        const hue = (i * 137.508) % 360; // golden angle spacing
+        const hue = (i * 137.508) % 360;
         return `hsl(${hue}deg 70% 55%)`;
       };
 
-      // Build ranked bars for each mode
-      let mode = 'zeroed';
-      let currentCat = '';
-      let barsScore = [...(DATA.bars_exclude || DATA.bars || [])];
-      let barsZeroed = [...(DATA.bars_zeroed || [])];
-      let barsReject = [...(DATA.bars_reject || [])];
-      const tip = document.getElementById('tip');
+      function resolveGrader(id) {
+        if (id && GRADERS[id]) return id;
+        for (const key of ORDER) {
+          if (GRADERS[key]) return key;
+        }
+        const keys = Object.keys(GRADERS);
+        return keys.length ? keys[0] : null;
+      }
 
       function drawAxes() {
-        ctx.clearRect(0,0,W,H);
-        // grid background
+        ctx.clearRect(0, 0, W, H);
         ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--panel-2') || '#f4f6ff';
         ctx.fillRect(PADDING.l, PADDING.t, innerW, innerH);
-        // vertical grid lines and x labels 0..1
         ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
         for (let i=0;i<=5;i++) {
           const x = PADDING.l + innerW*(i/5);
@@ -330,15 +384,61 @@ HTML = """
         }
       }
 
+      function drawPoints(progress=1) {
+        const bars = (mode === 'reject') ? barsReject : (mode === 'zeroed' ? barsZeroed : barsScore);
+        if (!bars.length) {
+          return;
+        }
+        const rowH = Math.max(18, Math.min(40, innerH / bars.length));
+        const gap = 8;
+        const totalH = bars.length * (rowH + gap) - gap;
+        const offsetY = PADDING.t + Math.max(0, (innerH - totalH)/2);
+        bars.forEach((b, i) => {
+          const y = offsetY + i*(rowH+gap);
+          const w = Math.max(0, b.avg) * innerW * progress;
+          const color = colorForIdx(i);
+          ctx.fillStyle = color;
+          ctx.fillRect(PADDING.l, y, Math.max(2, w), rowH);
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(0, y, PADDING.l - 8, rowH);
+          ctx.clip();
+          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text');
+          ctx.fillText(b.model, 12, y + rowH*0.7, PADDING.l - 24);
+          ctx.restore();
+          const chipW = 60;
+          ctx.fillStyle = '#0008';
+          ctx.fillRect(PADDING.l + Math.max(2,w) - chipW, y, chipW, rowH);
+          ctx.fillStyle = '#fff';
+          const disp = (mode === 'reject') ? (b.avg*100).toFixed(1)+'%' : (b.avg).toFixed(3);
+          ctx.fillText(disp, PADDING.l + Math.max(2,w) - chipW + 6, y + rowH*0.7);
+          b._geom = {x:PADDING.l, y, w:(Math.max(0, b.avg))*innerW, h:rowH};
+        });
+      }
+
+      function render(progress=1) {
+        drawAxes();
+        drawPoints(progress);
+      }
+
+      let animStart = null;
+      function animateBars(ts) {
+        if (animStart === null) animStart = ts;
+        const d = ts - animStart;
+        const p = Math.min(1, d/800);
+        render(p);
+        if (p < 1) requestAnimationFrame(animateBars);
+      }
+
       function scoreToPalette(score) {
         const s = Math.min(1, Math.max(0, Number.isFinite(score) ? score : 0));
         const sat = 82;
         let hue;
         if (s <= 0.5) {
-          const t = s / 0.5; // 0 → red, 1 → yellow
+          const t = s / 0.5;
           hue = 0 + (50 * t);
         } else {
-          const t = (s - 0.5) / 0.5; // 0 → yellow, 1 → green
+          const t = (s - 0.5) / 0.5;
           hue = 50 + (75 * t);
         }
         const light = (18 + s * 35);
@@ -351,20 +451,20 @@ HTML = """
         return { bg, border, text, muted };
       }
 
-      function refreshCategoryColors() {
-        document.querySelectorAll('table.cat tbody tr[data-score]').forEach((row) => {
+      function refreshCategoryColorsFor(viewId) {
+        const scope = document.querySelector(`[data-grader-view="${viewId}"][data-section="categories"]`);
+        if (!scope) return;
+        scope.querySelectorAll('table.cat tbody tr[data-score]').forEach((row) => {
           const score = parseFloat(row.dataset.score || '0');
           if (!Number.isFinite(score)) return;
           const palette = scoreToPalette(score);
-          row.style.setProperty('--score-bg', palette.bg);
-          row.style.setProperty('--score-border', palette.border);
           row.style.background = palette.bg;
           row.style.borderLeftColor = palette.border;
           const cells = row.querySelectorAll('td');
           if (palette.text) {
             row.style.color = palette.text;
             cells.forEach((cell, idx) => {
-              cell.style.color = idx === 1 && palette.muted ? palette.muted : palette.text;
+              cell.style.color = (idx === 1 && palette.muted) ? palette.muted : palette.text;
             });
           } else {
             row.style.removeProperty('color');
@@ -373,52 +473,118 @@ HTML = """
         });
       }
 
-      function drawPoints(progress=1) {
-        const bars = (mode === 'reject') ? barsReject : (mode === 'zeroed' ? barsZeroed : barsScore);
-        // bars
-        const rowH = Math.max(18, Math.min(40, innerH / Math.max(1,bars.length)));
-        const gap = 8;
-        const totalH = bars.length * (rowH + gap) - gap;
-        const offsetY = PADDING.t + Math.max(0, (innerH - totalH)/2);
-        for (let i=0;i<bars.length;i++) {
-          const b = bars[i];
-          const y = offsetY + i*(rowH+gap);
-          const w = (b.avg) * innerW * progress;
-          const color = colorForIdx(i);
-          ctx.fillStyle = color;
-          ctx.fillRect(PADDING.l, y, Math.max(2, w), rowH);
-          // label gutter
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(0, y, PADDING.l - 8, rowH);
-          ctx.clip();
-          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text');
-          ctx.fillText(b.model, 12, y + rowH*0.7, PADDING.l - 24);
-          ctx.restore();
-          // value chip
-          const chipW = 60;
-          ctx.fillStyle = '#0008';
-          ctx.fillRect(PADDING.l + Math.max(2,w) - chipW, y, chipW, rowH);
-          ctx.fillStyle = '#fff';
-          const disp = (mode === 'reject') ? (b.avg*100).toFixed(1)+'%' : (b.avg).toFixed(3);
-          ctx.fillText(disp, PADDING.l + Math.max(2,w) - chipW + 6, y + rowH*0.7);
-          b._geom = {x:PADDING.l, y, w:(b.avg)*innerW, h:rowH};
+      function updateBarsForSelection() {
+        const gData = GRADERS[currentGrader] || {};
+        let base = gData;
+        if (currentCat && gData.cat_bars && gData.cat_bars[currentCat]) {
+          base = gData.cat_bars[currentCat];
+        }
+        barsScore = (base.bars_exclude || base.bars || []).map((b) => ({...b}));
+        barsZeroed = (base.bars_zeroed || []).map((b) => ({...b}));
+        barsReject = (base.bars_reject || []).map((b) => ({...b}));
+      }
+
+      function updateMeta() {
+        const gData = GRADERS[currentGrader] || {};
+        if (metaGraderEl && gData.label) metaGraderEl.textContent = gData.label;
+        if (metaEmptyEl) {
+          if (gData.total_empty && gData.total_empty > 0) {
+            metaEmptyEl.textContent = ` · Empty answers: ${gData.total_empty}`;
+          } else {
+            metaEmptyEl.textContent = '';
+          }
         }
       }
 
-      function render(progress=1) { drawAxes(); drawPoints(progress); }
-
-      // initial animation
-      let t0 = null;
-      function animateBars(ts) {
-        if (!t0) t0 = ts;
-        const d = ts - t0; const p = Math.min(1, d/800);
-        render(p);
-        if (p < 1) requestAnimationFrame(animateBars);
+      function setViewVisibility(graderId) {
+        document.querySelectorAll('[data-grader-view]').forEach((el) => {
+          if (el.dataset.graderView === graderId) {
+            el.style.display = '';
+          } else {
+            el.style.display = 'none';
+          }
+        });
       }
-      requestAnimationFrame(animateBars);
 
-      // tooltip interactions for bars
+      function updateQuestionVisibility() {
+        const scope = document.querySelector(`[data-grader-view="${currentGrader}"][data-section="questions"]`);
+        if (!scope) return;
+        const blocks = scope.querySelectorAll('details.qd[data-cat]');
+        blocks.forEach((el) => {
+          const cat = el.getAttribute('data-cat');
+          if (!currentCat || !cat) {
+            el.style.display = '';
+          } else {
+            el.style.display = (cat === currentCat) ? '' : 'none';
+          }
+        });
+      }
+
+      function applyCategory(catId, animate=true) {
+        currentCat = catId || '';
+        updateBarsForSelection();
+        if (!currentCat) {
+          titleEl.textContent = 'All Questions Accounted (ranked)';
+        } else {
+          const found = categories.find((c) => c.id === currentCat);
+          titleEl.textContent = `Category ${currentCat}${found ? ' · ' + found.name : ''}`;
+        }
+        if (mode === 'reject') {
+          hintEl.textContent = 'Higher is worse — hover for details';
+        } else if (mode === 'zeroed') {
+          hintEl.textContent = 'Counts rejections as 0 — hover for details';
+        } else {
+          hintEl.textContent = 'Excludes rejections — hover for details';
+        }
+        updateQuestionVisibility();
+        if (animate) {
+          animStart = null;
+          requestAnimationFrame(animateBars);
+        } else {
+          render(1);
+        }
+        refreshCategoryColorsFor(currentGrader);
+      }
+
+      function setActive(btnId) {
+        ['mode-score','mode-zeroed','mode-reject'].forEach((id) => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          if (id === btnId) el.classList.add('active'); else el.classList.remove('active');
+        });
+      }
+
+      function setMode(newMode) {
+        mode = newMode;
+        setActive('mode-' + newMode);
+        applyCategory(currentCat, false);
+      }
+
+      function setGrader(graderId) {
+        const resolved = resolveGrader(graderId);
+        if (!resolved) {
+          currentGrader = null;
+          barsScore = [];
+          barsZeroed = [];
+          barsReject = [];
+          render(1);
+          return;
+        }
+        currentGrader = resolved;
+        if (graderSelect && graderSelect.value !== resolved) {
+          graderSelect.value = resolved;
+        }
+        updateMeta();
+        setViewVisibility(currentGrader);
+        const gData = GRADERS[currentGrader] || {};
+        if (currentCat && !(gData.cat_bars && gData.cat_bars[currentCat])) {
+          currentCat = '';
+          if (catSelect) catSelect.value = '';
+        }
+        setActive('mode-' + mode);
+        applyCategory(currentCat, false);
+      }
+
       canvas.addEventListener('mousemove', (ev) => {
         const rect = canvas.getBoundingClientRect(); const x = ev.clientX - rect.left; const y = ev.clientY - rect.top;
         const bars = (mode === 'reject') ? barsReject : (mode === 'zeroed' ? barsZeroed : barsScore);
@@ -431,90 +597,26 @@ HTML = """
           tip.style.display = 'block'; tip.style.left = (x + 12) + 'px'; tip.style.top = (y - 8) + 'px';
           if (mode === 'reject') {
             const rate = (hit.avg*100).toFixed(1)+'%';
-            const ntot = hit.n_total ?? totalQuestions;
-            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider})</span></div><div>Rejections: <strong>${rate}</strong> (empty=${hit.n_reject||0}, total=${ntot})</div><div class="muted">Higher is worse</div>`;
+            const ntot = hit.n_total ?? (hit.n + (hit.n_reject||0));
+            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider || ''})</span></div><div>Rejections: <strong>${rate}</strong> (empty=${hit.n_reject||0}, total=${ntot||0})</div><div class="muted">Higher is worse</div>`;
           } else if (mode === 'zeroed') {
             const ntot = hit.n_total ?? (hit.n + (hit.n_reject||0));
-            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider})</span></div><div>Avg (zeros for rejects): <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n}, rejects=${hit.n_reject||0}, total=${ntot})</div>`;
+            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider || ''})</span></div><div>Avg (zeros for rejects): <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n||0}, rejects=${hit.n_reject||0}, total=${ntot||0})</div>`;
           } else {
-            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider})</span></div><div>Average: <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n})</div>`;
+            tip.innerHTML = `<div><strong>${hit.model}</strong> <span class="muted">(${hit.provider || ''})</span></div><div>Average: <strong>${hit.avg.toFixed(3)}</strong> (answered=${hit.n||0})</div>`;
           }
         } else { tip.style.display = 'none'; }
       });
       canvas.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 
-      // Mode toggle controls
-      const titleEl = document.getElementById('chartTitle');
-      const hintEl = document.getElementById('chartHint');
-      function setActive(btnId) {
-        for (const id of ['mode-score','mode-zeroed','mode-reject']) {
-          const el = document.getElementById(id); if (!el) continue;
-          if (id === btnId) el.classList.add('active'); else el.classList.remove('active');
-        }
-      }
-      function setMode(newMode) {
-        mode = newMode;
-        applyCategory(currentCat, false); // refresh bars only
-      }
       document.getElementById('mode-score')?.addEventListener('click', () => setMode('score'));
       document.getElementById('mode-zeroed')?.addEventListener('click', () => setMode('zeroed'));
       document.getElementById('mode-reject')?.addEventListener('click', () => setMode('reject'));
 
-      // Category filter: filter question details + update chart
-      const catSelect = document.getElementById('categorySelect');
-      function applyCategory(catId, animateTransition=true) {
-        currentCat = catId || '';
-        // Update buttons
-        if (mode === 'reject') {
-          setActive('mode-reject');
-          hintEl.textContent = 'Higher is worse — hover for details';
-        } else if (mode === 'zeroed') {
-          setActive('mode-zeroed');
-          hintEl.textContent = 'Counts rejections as 0 — hover for details';
-        } else {
-          setActive('mode-score');
-          hintEl.textContent = 'Excludes rejections — hover for details';
-        }
-
-        // Update chart title + data
-        if (!currentCat) {
-          titleEl.textContent = 'All Questions Accounted (ranked)';
-          barsScore = [...(DATA.bars_exclude || DATA.bars || [])];
-          barsZeroed = [...(DATA.bars_zeroed || [])];
-          barsReject = [...(DATA.bars_reject || [])];
-        } else {
-          const cat = DATA.cat_bars?.[currentCat] || {};
-          titleEl.textContent = `Category ${currentCat} · ${(categories.find(c => c.id == currentCat)?.name || '')}`;
-          barsScore = [...(cat.exclude || [])];
-          barsZeroed = [...(cat.zeroed || [])];
-          barsReject = [...(cat.reject || [])];
-        }
-        // Update details filtering
-        document.querySelectorAll('details.qd').forEach((el) => {
-          const cat = el.getAttribute('data-cat');
-          if (!currentCat || !cat) {
-            el.style.display = '';
-          } else {
-            el.style.display = (cat === currentCat) ? '' : 'none';
-          }
-        });
-        if (animateTransition) {
-          t0 = null;
-          requestAnimationFrame(animateBars);
-        } else {
-          render(1);
-        }
-        refreshCategoryColors();
-      }
+      graderSelect?.addEventListener('change', (e) => setGrader(e.target.value));
       catSelect?.addEventListener('change', (e) => applyCategory(e.target.value, true));
 
-      // Initialize defaults
-      setMode('zeroed');
-      applyCategory('', false);
-      refreshCategoryColors();
-
-      // Images lazy-toggle with details-open and fallback path
-      document.addEventListener('click', (e) => {
+      function toggleImages(e) {
         const btn = e.target.closest('button.toggle'); if (!btn) return; e.preventDefault(); e.stopPropagation();
         const id = btn.getAttribute('data-target'); const panel = document.getElementById(id); if (!panel) return;
         const det = btn.closest('details'); if (det && !det.open) det.open = true;
@@ -530,27 +632,33 @@ HTML = """
         } else {
           const cnt = panel.querySelectorAll('img').length; btn.textContent = `Show ${cnt} image${cnt>1?'s':''}`;
         }
-      });
+      }
+      document.addEventListener('click', toggleImages);
 
-      // Theme toggle with persistence
       const themeToggle = document.getElementById('themeToggle');
       const applyTheme = (t) => { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); };
-      const initial = localStorage.getItem('theme') || 'light';
-      applyTheme(initial);
+      const initialTheme = localStorage.getItem('theme') || 'light';
+      applyTheme(initialTheme);
       themeToggle && themeToggle.addEventListener('click', () => {
         const cur = document.documentElement.getAttribute('data-theme') || 'light';
         applyTheme(cur === 'light' ? 'dark' : 'light');
       });
 
-      // Expand/Collapse all models
       const expandAll = document.getElementById('expandAll');
       const collapseAll = document.getElementById('collapseAll');
       expandAll?.addEventListener('click', () => {
-        document.querySelectorAll('details.mcard').forEach(d => d.open = true);
+        const scope = document.querySelector(`[data-grader-view="${currentGrader}"][data-section="questions"]`);
+        scope?.querySelectorAll('details.mcard').forEach((d) => d.open = true);
       });
       collapseAll?.addEventListener('click', () => {
-        document.querySelectorAll('details.mcard').forEach(d => d.open = false);
+        const scope = document.querySelector(`[data-grader-view="${currentGrader}"][data-section="questions"]`);
+        scope?.querySelectorAll('details.mcard').forEach((d) => d.open = false);
       });
+
+      currentGrader = resolveGrader(currentGrader);
+      setActive('mode-zeroed');
+      setGrader(currentGrader);
+      refreshCategoryColorsFor(currentGrader);
     </script>
 
   </div>
@@ -617,294 +725,107 @@ def _canonical_categories(qmap: Dict[str, Dict[str, Any]]) -> Dict[int, str]:
             cats[maj] = f"Chapter {maj}"
     return cats
 
-def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None, empty_stats_path: Optional[Path] = None):
-    base = Path(csv_path)
-    if base.is_dir():
-        csv_files = sorted(base.glob("scores__*.csv"))
-        if not csv_files:
-            # backward compatibility
-            legacy = base / "scores.csv"
-            csv_files = [legacy] if legacy.exists() else []
-        frames = []
-        for fp in csv_files:
-            try:
-                frames.append(pd.read_csv(fp))
-            except Exception:
-                continue
-        if frames:
-            df = pd.concat(frames, ignore_index=True)
-        else:
-            df = pd.DataFrame(columns=["provider","model","qid","answer","grader","score","justification","missed","harmful"])
-        base_dir = base
-    else:
-        df = pd.read_csv(base)
-        base_dir = base.parent
-    # If dataset path not provided, try default relative to CSVs dir
-    if dataset_path is None:
-        dataset_path = (base_dir.parent / "dataset.jsonl") if base_dir.name == "graded" else (base_dir / "dataset.jsonl")
-    qmap = _read_dataset(dataset_path)
 
-    # Compute canonical categories from dataset
-    categories_by_major = _canonical_categories(qmap)
-    all_majors = sorted(categories_by_major.keys())
-    # Prepare reverse map qid->major
-    qid_major: Dict[str, Optional[int]] = {qid: _major_of(qid) for qid in qmap.keys()}
+def _slugify(value: str) -> str:
+    value = re.sub(r"[^a-zA-Z0-9]+", "-", str(value or "")).strip("-").lower()
+    return value or "view"
 
-    # Load empty answer statistics if available
-    empty_stats = {}  # model -> count
-    empty_qids_by_model: Dict[str, Set[str]] = {}
-    provider_for_model: Dict[str, str] = {}
-    total_empty = 0
-    if empty_stats_path:
-        ep = Path(empty_stats_path)
-        if ep.exists():
-            files: List[Path]
-            if ep.is_dir():
-                files = sorted(ep.glob("empty_answers__*.csv"))
-                if not files:
-                    # backward compat
-                    legacy = ep / "empty_answers.csv"
-                    files = [legacy] if legacy.exists() else []
-            else:
-                files = [ep]
-            for fp in files:
-                try:
-                    empty_df = pd.read_csv(fp)
-                except Exception:
-                    continue
-                for _, row in empty_df.iterrows():
-                    model = str(row.get("model", ""))
-                    provider = str(row.get("provider", ""))
-                    empty_stats[model] = empty_stats.get(model, 0) + 1
-                    qid_val = str(row.get("qid", "")).strip()
-                    if qid_val:
-                        empty_qids_by_model.setdefault(model, set()).add(qid_val)
-                    if model and provider and model not in provider_for_model:
-                        provider_for_model[model] = provider
-                    total_empty += 1
+def _display_grader_name(name: str) -> str:
+    text = str(name or "").strip()
+    return text if text else "Unknown grader"
 
-    # Resolve images relative path from HTML dir to images folder
-    html_dir = html_path.parent
-    images_dir = dataset_path.parent / "images"
-    rel_images_base = os.path.relpath(images_dir, html_dir)
-
-    # Prepare rows grouped by model with enriched question/answer data
+def _build_view(
+    models: List[str],
+    base_rows_by_model: Dict[str, List[Dict[str, Any]]],
+    empty_counter_by_model: Dict[str, Counter],
+    empty_counts_by_model: Dict[str, int],
+    provider_by_model: Dict[str, str],
+    qmap: Dict[str, Dict[str, Any]],
+    categories_by_major: Dict[int, str],
+    qs_by_cat: Dict[int, Set[str]],
+    rel_images_base: str,
+    grader_label: str,
+) -> Dict[str, Any]:
     rows_by_model: Dict[str, List[Dict[str, Any]]] = {}
-    sum_by_model: Dict[str, float] = {}
-    provider_by_model: Dict[str, str] = {}
-    for _, row in df.iterrows():
-        qid = str(row["qid"])
-        model = str(row["model"]) if "model" in row else ""
-        provider = str(row.get("provider", ""))
-        if model and provider and model not in provider_by_model:
-            provider_by_model[model] = provider
-        # Map CSV row to enriched record
-        qi = qmap.get(qid, {})
-        imgs = [str(x) for x in qi.get("images", [])]
-        # Fix image paths and add absolute-like fallback
-        fixed_imgs: List[Dict[str, str]] = []
-        for p in imgs:
-            base = os.path.basename(p)
-            relp = str(Path(rel_images_base) / base)
-            absp = "/out/images/" + base
-            fixed_imgs.append({"rel": relp, "abs": absp})
-        # harmful flag normalization
-        hraw = row.get("harmful", False)
-        if isinstance(hraw, float) and pd.isna(hraw):
-            harmful = False
-        elif isinstance(hraw, (bool, int)):
-            harmful = bool(hraw)
-        else:
-            harmful = str(hraw).strip().lower() in ("1", "true", "yes", "y")
-
-        model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", model).strip("_") or "model"
-
-        maj = _major_of(qid)
-        cat_name = categories_by_major.get(maj, f"Chapter {maj}" if maj is not None else "")
-
-        rec = {
-            "provider": provider,
-            "model": model,
-            "qid": qid,
-            "score": float(row.get("score", 0.0)),
-            "justification": str(row.get("justification", "")),
-            "answer": str(row.get("answer", "")),
-            "grader": str(row.get("grader", "")),
-            "harmful": harmful,
-            "missed": _safe_list(row.get("missed", [])),
-            "question_text": str(qi.get("question_text", "")),
-            "answer_text": str(qi.get("answer_text", "")),
-            "page_start": int(qi.get("page_start", 0) or 0),
-            "page_end": int(qi.get("page_end", 0) or 0),
-            "images": fixed_imgs,
-            "model_slug": model_slug,
-            "rejected": False,
-            "category_id": str(maj) if maj is not None else "",
-            "category_name": cat_name,
-        }
-        rows_by_model.setdefault(model, []).append(rec)
-        # aggregate
-        sum_by_model[model] = sum_by_model.get(model, 0.0) + float(rec["score"])
-
-    # Sort rows in each model by QID
-    for m in rows_by_model:
-        rows_by_model[m].sort(key=lambda r: _qid_key(r["qid"]))
-
-    # Compute per-model averages and chart points
-    model_avgs: Dict[str, float] = {}
-    points: List[Dict[str, Any]] = []
-    # Include models that only have empty answers
-    models_from_empty = list(empty_stats.keys())
-    # prefer provider from graded, else from empty stats
-    for m, prov in provider_for_model.items():
-        if m not in provider_by_model:
-            provider_by_model[m] = prov
-    models = sorted(set(list(rows_by_model.keys()) + models_from_empty))
-    qids = sorted({r["qid"] for rows in rows_by_model.values() for r in rows} | set(qmap.keys()), key=_qid_key)
-    for m, rows in rows_by_model.items():
-        if rows:
-            model_avgs[m] = sum(r["score"] for r in rows) / len(rows)
-        else:
-            model_avgs[m] = 0.0
-        for r in rows:
-            points.append({"model": m, "provider": r["provider"], "qid": r["qid"], "score": r["score"]})
-
-    # Ranked bars: best to worst (exclude rejections)
-    bars_exclude = sorted(
-        (
-            {
-                "model": m,
-                "provider": provider_by_model.get(m, (rows_by_model[m][0]["provider"] if rows_by_model.get(m) else "")),
-                "avg": model_avgs.get(m, 0.0),
-                "n": len(rows_by_model.get(m, [])),
-            }
-            for m in models
-        ),
-        key=lambda x: x["avg"], reverse=True
-    )
-
-    # Zeroed bars: count rejections as score 0
-    bars_zeroed_raw = []
+    provider_map: Dict[str, str] = {}
     for m in models:
-        n_answered = len(rows_by_model.get(m, []))
-        n_reject = int(empty_stats.get(m, 0))
+        base_rows = base_rows_by_model.get(m, [])
+        copied = [copy.deepcopy(r) for r in base_rows]
+        for r in copied:
+            r.setdefault("rejected", False)
+            r.setdefault("rejection_count", 0)
+        rows_by_model[m] = copied
+        if provider_by_model.get(m):
+            provider_map[m] = provider_by_model[m]
+        elif copied:
+            provider_map[m] = copied[0].get("provider", "")
+        else:
+            provider_map[m] = provider_by_model.get(m, "")
+    empty_counts = {m: int(empty_counts_by_model.get(m, 0)) for m in models}
+
+    model_avgs: Dict[str, float] = {}
+    bars_exclude: List[Dict[str, Any]] = []
+    bars_zeroed: List[Dict[str, Any]] = []
+    bars_reject: List[Dict[str, Any]] = []
+
+    for m in models:
+        rows = rows_by_model[m]
+        answered = [r for r in rows if not r.get("rejected")]
+        sum_score = sum(float(r.get("score", 0.0)) for r in answered)
+        n_answered = len(answered)
+        avg_answered = (sum_score / n_answered) if n_answered else 0.0
+        model_avgs[m] = avg_answered
+        n_reject = empty_counts.get(m, 0)
         n_total = n_answered + n_reject
-        total_score = sum_by_model.get(m, 0.0)
-        avg_zeroed = (total_score / n_total) if n_total > 0 else 0.0
-        bars_zeroed_raw.append({
+        avg_zeroed = (sum_score / n_total) if n_total else 0.0
+        frac_reject = (n_reject / n_total) if n_total else 0.0
+        provider = provider_map.get(m, "")
+        bars_exclude.append({"model": m, "provider": provider, "avg": avg_answered, "n": n_answered})
+        bars_zeroed.append({
             "model": m,
-            "provider": provider_by_model.get(m, (rows_by_model[m][0]["provider"] if rows_by_model.get(m) else "")),
+            "provider": provider,
             "avg": avg_zeroed,
             "n": n_answered,
             "n_reject": n_reject,
             "n_total": n_total,
         })
-    bars_zeroed = sorted(bars_zeroed_raw, key=lambda x: x["avg"], reverse=True)
-
-    # Rejection bars: fraction rejected
-    bars_reject_raw = []
-    for m in models:
-        n_answered = len(rows_by_model.get(m, []))
-        n_reject = int(empty_stats.get(m, 0))
-        n_total = n_answered + n_reject
-        frac_reject = (n_reject / n_total) if n_total > 0 else 0.0
-        bars_reject_raw.append({
+        bars_reject.append({
             "model": m,
-            "provider": provider_by_model.get(m, (rows_by_model[m][0]["provider"] if rows_by_model.get(m) else "")),
+            "provider": provider,
             "avg": frac_reject,
             "n": n_answered,
             "n_reject": n_reject,
             "n_total": n_total,
         })
-    # Sort rejection from worst to best (higher first)
-    bars_reject = sorted(bars_reject_raw, key=lambda x: x["avg"], reverse=True)
 
-    # Add rejected questions to per-model rows so the main view lists all questions.
-    # These entries are tagged as rejected and hidden when excluding rejections.
-    if empty_qids_by_model:
-        for m in models:
-            rej_qs = empty_qids_by_model.get(m, set())
-            if not rej_qs:
-                continue
-            answered_qs = {r["qid"] for r in rows_by_model.get(m, [])}
-            provider = provider_by_model.get(m, provider_for_model.get(m, ""))
-            for qid in sorted(rej_qs - answered_qs, key=_qid_key):
-                qi = qmap.get(qid, {})
-                imgs = [str(x) for x in qi.get("images", [])]
-                fixed_imgs: List[Dict[str, str]] = []
-                for p in imgs:
-                    base = os.path.basename(p)
-                    relp = str(Path(rel_images_base) / base)
-                    absp = "/out/images/" + base
-                    fixed_imgs.append({"rel": relp, "abs": absp})
-                model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", m).strip("_") or "model"
-                maj = _major_of(qid)
-                cat_name = categories_by_major.get(maj, f"Chapter {maj}" if maj is not None else "")
-                rec = {
-                    "provider": provider,
-                    "model": m,
-                    "qid": qid,
-                    "score": 0.0,
-                    "justification": "",
-                    "answer": "",
-                    "grader": "",
-                    "harmful": False,
-                    "missed": [],
-                    "question_text": str(qi.get("question_text", "")),
-                    "answer_text": str(qi.get("answer_text", "")),
-                    "page_start": int(qi.get("page_start", 0) or 0),
-                    "page_end": int(qi.get("page_end", 0) or 0),
-                    "images": fixed_imgs,
-                    "model_slug": model_slug,
-                    "rejected": True,
-                    "category_id": str(maj) if maj is not None else "",
-                    "category_name": cat_name,
-                }
-                rows_by_model.setdefault(m, []).append(rec)
-        # Resort rows to keep QIDs ordered
-        for m in rows_by_model:
-            rows_by_model[m].sort(key=lambda r: _qid_key(r["qid"]))
-        # Ensure averages map has entries for any models added only via rejections
-        for m in rows_by_model.keys():
-            if m not in model_avgs:
-                model_avgs[m] = 0.0
+    bars_exclude.sort(key=lambda x: x["avg"], reverse=True)
+    bars_zeroed.sort(key=lambda x: x["avg"], reverse=True)
+    bars_reject.sort(key=lambda x: x["avg"], reverse=True)
 
-    # Determine grader name (if consistent)
-    grader_name = ""
-    if "grader" in df.columns and not df["grader"].isna().all():
-        vals = [v for v in df["grader"].unique() if isinstance(v, str)]
-        grader_name = vals[0] if vals else ""
-
-    # ----- Build category aggregates -----
-    # Per-category per-model stats and per-category bars
     cat_list: List[Dict[str, Any]] = []
     cat_bars: Dict[str, Dict[str, Any]] = {}
-    # Precompute total questions per category from dataset
-    qs_by_cat: Dict[int, Set[str]] = defaultdict(set)
-    for qid in qmap.keys():
-        maj = _major_of(qid)
-        if maj is not None:
-            qs_by_cat[maj].add(qid)
-
-    # Build per-category model stats
-    for maj in all_majors:
+    for maj in sorted(categories_by_major.keys()):
         cat_name = categories_by_major.get(maj, f"Chapter {maj}")
-        # Build stats rows for table
         rows_for_cat: List[Dict[str, Any]] = []
         bars_exclude_cat: List[Dict[str, Any]] = []
         bars_zeroed_cat: List[Dict[str, Any]] = []
         bars_reject_cat: List[Dict[str, Any]] = []
         for m in models:
-            answered = [r for r in rows_by_model.get(m, []) if not r["rejected"] and r.get("category_id") == str(maj)]
+            rows = rows_by_model[m]
+            answered = [r for r in rows if not r.get("rejected") and r.get("category_id") == str(maj)]
+            sum_score = sum(float(r.get("score", 0.0)) for r in answered)
             n_answered = len(answered)
-            sum_score = sum(r["score"] for r in answered)
+            counter = empty_counter_by_model.get(m, Counter())
             rejects_in_cat = 0
-            if empty_qids_by_model.get(m):
-                rejects_in_cat = sum(1 for qid in empty_qids_by_model[m] if _major_of(qid) == maj)
-            n_total = n_answered + rejects_in_cat
-            avg_answered = (sum_score / n_answered) if n_answered > 0 else 0.0
-            avg_zeroed = (sum_score / n_total) if n_total > 0 else 0.0
-            provider = provider_by_model.get(m, (rows_by_model[m][0]["provider"] if rows_by_model.get(m) else ""))
+            if counter:
+                for qid, count in counter.items():
+                    if _major_of(qid) == maj:
+                        rejects_in_cat += int(count)
+            total = n_answered + rejects_in_cat
+            avg_answered = (sum_score / n_answered) if n_answered else 0.0
+            avg_zeroed = (sum_score / total) if total else 0.0
+            frac_reject = (rejects_in_cat / total) if total else 0.0
+            provider = provider_map.get(m, "")
             rows_for_cat.append({
                 "model": m,
                 "provider": provider,
@@ -912,37 +833,29 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
                 "avg_zeroed": avg_zeroed,
                 "n_answered": n_answered,
                 "n_reject": rejects_in_cat,
-                "n_total": n_total,
+                "n_total": total,
             })
-            bars_exclude_cat.append({
-                "model": m,
-                "provider": provider,
-                "avg": avg_answered,
-                "n": n_answered,
-            })
+            bars_exclude_cat.append({"model": m, "provider": provider, "avg": avg_answered, "n": n_answered})
             bars_zeroed_cat.append({
                 "model": m,
                 "provider": provider,
                 "avg": avg_zeroed,
                 "n": n_answered,
                 "n_reject": rejects_in_cat,
-                "n_total": n_total,
+                "n_total": total,
             })
-            frac_reject = (rejects_in_cat / n_total) if n_total > 0 else 0.0
             bars_reject_cat.append({
                 "model": m,
                 "provider": provider,
                 "avg": frac_reject,
                 "n": n_answered,
                 "n_reject": rejects_in_cat,
-                "n_total": n_total,
+                "n_total": total,
             })
-        # Sort rows by zeroed average
         rows_for_cat.sort(key=lambda r: r["avg_zeroed"], reverse=True)
         bars_exclude_cat.sort(key=lambda r: r["avg"], reverse=True)
         bars_zeroed_cat.sort(key=lambda r: r["avg"], reverse=True)
         bars_reject_cat.sort(key=lambda r: r["avg"], reverse=True)
-
         cat_list.append({
             "id": str(maj),
             "name": cat_name,
@@ -955,31 +868,445 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             "reject": bars_reject_cat,
         }
 
+    for m in models:
+        counter = empty_counter_by_model.get(m, Counter())
+        if not counter:
+            continue
+        answered_qs = {r["qid"] for r in rows_by_model[m]}
+        provider = provider_map.get(m, "")
+        for qid, count in counter.items():
+            if qid in answered_qs:
+                continue
+            qi = qmap.get(qid, {})
+            imgs = [str(x) for x in qi.get("images", [])]
+            fixed_imgs: List[Dict[str, str]] = []
+            for p in imgs:
+                base = os.path.basename(p)
+                relp = str(Path(rel_images_base) / base)
+                absp = "/out/images/" + base
+                fixed_imgs.append({"rel": relp, "abs": absp})
+            model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", m).strip("_") or "model"
+            maj = _major_of(qid)
+            cat_name = categories_by_major.get(maj, f"Chapter {maj}" if maj is not None else "")
+            rows_by_model[m].append({
+                "provider": provider,
+                "model": m,
+                "qid": qid,
+                "score": 0.0,
+                "justification": "",
+                "answer": "",
+                "grader": grader_label,
+                "harmful": False,
+                "missed": [],
+                "question_text": str(qi.get("question_text", "")),
+                "answer_text": str(qi.get("answer_text", "")),
+                "page_start": int(qi.get("page_start", 0) or 0),
+                "page_end": int(qi.get("page_end", 0) or 0),
+                "images": fixed_imgs,
+                "model_slug": model_slug,
+                "rejected": True,
+                "rejection_count": int(count),
+                "category_id": str(maj) if maj is not None else "",
+                "category_name": cat_name,
+            })
+
+    for m in models:
+        rows_by_model[m].sort(key=lambda r: _qid_key(r["qid"]))
+
+    model_order = [m for m in models if rows_by_model[m]]
+    empty_stats = {m: empty_counts[m] for m in models if empty_counts[m] > 0}
+    total_empty = sum(empty_counts.values())
+
+    return {
+        "rows_by_model": rows_by_model,
+        "model_avgs": model_avgs,
+        "bars_exclude": bars_exclude,
+        "bars_zeroed": bars_zeroed,
+        "bars_reject": bars_reject,
+        "cat_list": cat_list,
+        "cat_bars": cat_bars,
+        "empty_stats": empty_stats,
+        "total_empty": total_empty,
+        "provider_by_model": provider_map,
+        "model_order": model_order,
+    }
+
+def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None, empty_stats_path: Optional[Path] = None):
+    base = Path(csv_path)
+    if base.is_dir():
+        csv_files = sorted(base.glob("scores__*.csv"))
+        if not csv_files:
+            legacy = base / "scores.csv"
+            csv_files = [legacy] if legacy.exists() else []
+        frames: List[pd.DataFrame] = []
+        for fp in csv_files:
+            try:
+                df_part = pd.read_csv(fp)
+            except Exception:
+                continue
+            parts = fp.stem.split("__")
+            file_model = parts[1].replace("_", "/") if len(parts) >= 2 else ""
+            file_grader = parts[2].replace("_", "/") if len(parts) >= 3 else ""
+            if "model" not in df_part.columns:
+                df_part["model"] = file_model
+            else:
+                df_part["model"] = df_part["model"].fillna(file_model)
+            if "grader" not in df_part.columns:
+                df_part["grader"] = file_grader
+            else:
+                df_part["grader"] = df_part["grader"].fillna(file_grader)
+            frames.append(df_part)
+        if frames:
+            df = pd.concat(frames, ignore_index=True)
+        else:
+            df = pd.DataFrame(columns=["provider","model","qid","answer","grader","score","justification","missed","harmful"])
+        base_dir = base
+    else:
+        try:
+            df = pd.read_csv(base)
+        except Exception:
+            df = pd.DataFrame(columns=["provider","model","qid","answer","grader","score","justification","missed","harmful"])
+        parts = base.stem.split("__")
+        file_model = parts[1].replace("_", "/") if len(parts) >= 2 else ""
+        file_grader = parts[2].replace("_", "/") if len(parts) >= 3 else ""
+        if "model" not in df.columns:
+            df["model"] = file_model
+        else:
+            df["model"] = df["model"].fillna(file_model)
+        if "grader" not in df.columns:
+            df["grader"] = file_grader
+        else:
+            df["grader"] = df["grader"].fillna(file_grader)
+        base_dir = base.parent
+
+    df["model"] = df["model"].fillna("").astype(str)
+    df["grader"] = df["grader"].fillna("").astype(str)
+
+    if dataset_path is None:
+        dataset_path = (base_dir.parent / "dataset.jsonl") if base_dir.name == "graded" else (base_dir / "dataset.jsonl")
+    dataset_path = Path(dataset_path)
+
+    if empty_stats_path is None:
+        empty_stats_path = base_dir
+    empty_stats_path = Path(empty_stats_path)
+
+    html_dir = html_path.parent
+    html_dir.mkdir(parents=True, exist_ok=True)
+
+    qmap = _read_dataset(dataset_path)
+    categories_by_major = _canonical_categories(qmap)
+
+    images_dir = dataset_path.parent / "images" if dataset_path else base_dir / "images"
+    if not images_dir.exists():
+        alt = base_dir / "images"
+        if alt.exists() or True:
+            images_dir = alt
+    rel_images_base = os.path.relpath(images_dir, html_dir)
+
+    rows_by_grader_model: Dict[str, Dict[str, List[Dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    provider_by_grader_model: Dict[str, Dict[str, str]] = defaultdict(dict)
+    empty_counter_by_grader_model: Dict[str, Dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
+    empty_counts_by_grader_model: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    agg_rows_by_model: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    agg_provider_by_model: Dict[str, str] = {}
+    agg_empty_counter: Dict[str, Counter] = defaultdict(Counter)
+    agg_empty_counts: Dict[str, int] = defaultdict(int)
+
+    models_set: Set[str] = set()
+    grader_names: Set[str] = set()
+
+    for _, row in df.iterrows():
+        qid = str(row.get("qid", "")).strip()
+        if not qid:
+            continue
+        model = str(row.get("model", "")).strip()
+        if not model:
+            continue
+        provider = str(row.get("provider", "") or "").strip()
+        grader = str(row.get("grader", "") or "").strip()
+        answer = str(row.get("answer", "") or "")
+        score_val = row.get("score", 0.0)
+        try:
+            score = float(score_val)
+        except Exception:
+            score = 0.0
+        if not math.isfinite(score):
+            score = 0.0
+        justification = str(row.get("justification", "") or "")
+        missed = _safe_list(row.get("missed", []))
+        h_raw = row.get("harmful", False)
+        if isinstance(h_raw, float) and math.isnan(h_raw):
+            harmful = False
+        elif isinstance(h_raw, (bool, int)):
+            harmful = bool(h_raw)
+        else:
+            harmful = str(h_raw).strip().lower() in {"1", "true", "yes", "y"}
+
+        qi = qmap.get(qid, {})
+        imgs = [str(x) for x in qi.get("images", [])]
+        fixed_imgs: List[Dict[str, str]] = []
+        for p in imgs:
+            base = os.path.basename(p)
+            relp = str(Path(rel_images_base) / base)
+            absp = "/out/images/" + base
+            fixed_imgs.append({"rel": relp, "abs": absp})
+
+        model_slug = re.sub(r"[^a-zA-Z0-9]+", "_", model).strip("_") or "model"
+        maj = _major_of(qid)
+        cat_name = categories_by_major.get(maj, f"Chapter {maj}" if maj is not None else "")
+
+        record = {
+            "provider": provider,
+            "model": model,
+            "qid": qid,
+            "score": score,
+            "justification": justification,
+            "answer": answer,
+            "grader": grader,
+            "harmful": harmful,
+            "missed": missed,
+            "question_text": str(qi.get("question_text", "")),
+            "answer_text": str(qi.get("answer_text", "")),
+            "page_start": int(qi.get("page_start", 0) or 0),
+            "page_end": int(qi.get("page_end", 0) or 0),
+            "images": fixed_imgs,
+            "model_slug": model_slug,
+            "rejected": False,
+            "rejection_count": 0,
+            "category_id": str(maj) if maj is not None else "",
+            "category_name": cat_name,
+        }
+
+        rows_by_grader_model[grader][model].append(record)
+        agg_rows_by_model[model].append(copy.deepcopy(record))
+
+        if provider and not provider_by_grader_model[grader].get(model):
+            provider_by_grader_model[grader][model] = provider
+        if provider and not agg_provider_by_model.get(model):
+            agg_provider_by_model[model] = provider
+
+        models_set.add(model)
+        grader_names.add(grader)
+
+    empty_files: List[Path] = []
+    if empty_stats_path.is_dir():
+        empty_files = sorted(empty_stats_path.glob("empty_answers__*.csv"))
+        if not empty_files:
+            legacy = empty_stats_path / "empty_answers.csv"
+            if legacy.exists():
+                empty_files = [legacy]
+    else:
+        if empty_stats_path.exists():
+            empty_files = [empty_stats_path]
+
+    for fp in empty_files:
+        try:
+            empty_df = pd.read_csv(fp)
+        except Exception:
+            continue
+        parts = fp.stem.split("__")
+        file_model = parts[1].replace("_", "/") if len(parts) >= 2 else ""
+        file_grader = parts[2].replace("_", "/") if len(parts) >= 3 else ""
+        if "model" not in empty_df.columns:
+            empty_df["model"] = file_model
+        else:
+            empty_df["model"] = empty_df["model"].fillna(file_model)
+        if "grader" not in empty_df.columns:
+            empty_df["grader"] = file_grader
+        else:
+            empty_df["grader"] = empty_df["grader"].fillna(file_grader)
+        if "provider" not in empty_df.columns:
+            empty_df["provider"] = ""
+        else:
+            empty_df["provider"] = empty_df["provider"].fillna("")
+        for _, row in empty_df.iterrows():
+            model = str(row.get("model", "") or "").strip()
+            if not model:
+                continue
+            grader = str(row.get("grader", "") or "").strip()
+            qid = str(row.get("qid", "") or "").strip()
+            if not qid:
+                continue
+            provider = str(row.get("provider", "") or "").strip()
+            empty_counter_by_grader_model[grader][model][qid] += 1
+            empty_counts_by_grader_model[grader][model] += 1
+            agg_empty_counter[model][qid] += 1
+            agg_empty_counts[model] += 1
+            if provider and not provider_by_grader_model[grader].get(model):
+                provider_by_grader_model[grader][model] = provider
+            if provider and not agg_provider_by_model.get(model):
+                agg_provider_by_model[model] = provider
+            models_set.add(model)
+            grader_names.add(grader)
+
+    for grader_map in provider_by_grader_model.values():
+        for model, provider in grader_map.items():
+            if provider and not agg_provider_by_model.get(model):
+                agg_provider_by_model[model] = provider
+
+    models = sorted(models_set)
+
+    majors_from_data: Set[int] = set()
+    for rows_list in agg_rows_by_model.values():
+        for rec in rows_list:
+            maj = _major_of(rec.get("qid"))
+            if maj is not None:
+                majors_from_data.add(maj)
+    for counter in agg_empty_counter.values():
+        for qid in counter.keys():
+            maj = _major_of(qid)
+            if maj is not None:
+                majors_from_data.add(maj)
+    for maj in majors_from_data:
+        categories_by_major.setdefault(maj, f"Chapter {maj}")
+
+    qs_by_cat: Dict[int, Set[str]] = defaultdict(set)
+    if qmap:
+        for qid in qmap.keys():
+            maj = _major_of(qid)
+            if maj is not None:
+                qs_by_cat[maj].add(qid)
+    else:
+        for rows_list in agg_rows_by_model.values():
+            for rec in rows_list:
+                maj = _major_of(rec.get("qid"))
+                if maj is not None:
+                    qs_by_cat[maj].add(rec["qid"])
+        for counter in agg_empty_counter.values():
+            for qid in counter.keys():
+                maj = _major_of(qid)
+                if maj is not None:
+                    qs_by_cat[maj].add(qid)
+
+    all_majors = sorted(categories_by_major.keys())
+    category_options = [{"id": str(maj), "name": categories_by_major.get(maj, f"Chapter {maj}")} for maj in all_majors]
+
+    grader_labels = {g: _display_grader_name(g) for g in grader_names}
+    sorted_graders = sorted(grader_names, key=lambda g: grader_labels[g])
+    source_graders = []
+    for g in sorted_graders:
+        label = grader_labels[g]
+        if label not in source_graders:
+            source_graders.append(label)
+
+    agg_metrics = _build_view(
+        models,
+        {m: agg_rows_by_model.get(m, []) for m in models},
+        {m: Counter(agg_empty_counter.get(m, Counter())) for m in models},
+        {m: int(agg_empty_counts.get(m, 0)) for m in models},
+        agg_provider_by_model,
+        qmap,
+        categories_by_major,
+        qs_by_cat,
+        rel_images_base,
+        "All graders (avg)",
+    )
+
+    views: List[Dict[str, Any]] = []
+    views.append({
+        "id": "all",
+        "label": "All graders (avg)",
+        "active": True,
+        "is_all": True,
+        "source_graders": source_graders,
+        "rows_by_model": agg_metrics["rows_by_model"],
+        "model_avgs": agg_metrics["model_avgs"],
+        "provider_by_model": agg_metrics["provider_by_model"],
+        "categories": agg_metrics["cat_list"],
+        "cat_bars": agg_metrics["cat_bars"],
+        "bars_exclude": agg_metrics["bars_exclude"],
+        "bars_zeroed": agg_metrics["bars_zeroed"],
+        "bars_reject": agg_metrics["bars_reject"],
+        "empty_stats": agg_metrics["empty_stats"],
+        "total_empty": agg_metrics["total_empty"],
+        "model_order": agg_metrics["model_order"],
+    })
+
+    for grader in sorted_graders:
+        label = grader_labels[grader]
+        view_id = _slugify(f"{label}-{grader}" if grader else label)
+        rows_map = rows_by_grader_model.get(grader, {})
+        counter_map = empty_counter_by_grader_model.get(grader, {})
+        counts_map = empty_counts_by_grader_model.get(grader, {})
+        provider_map = provider_by_grader_model.get(grader, {})
+        metrics = _build_view(
+            models,
+            {m: rows_map.get(m, []) for m in models},
+            {m: Counter(counter_map.get(m, Counter())) for m in models},
+            {m: int(counts_map.get(m, 0)) for m in models},
+            provider_map,
+            qmap,
+            categories_by_major,
+            qs_by_cat,
+            rel_images_base,
+            label,
+        )
+        views.append({
+            "id": view_id,
+            "label": label,
+            "grader_key": grader,
+            "active": False,
+            "is_all": False,
+            "rows_by_model": metrics["rows_by_model"],
+            "model_avgs": metrics["model_avgs"],
+            "provider_by_model": metrics["provider_by_model"],
+            "categories": metrics["cat_list"],
+            "cat_bars": metrics["cat_bars"],
+            "bars_exclude": metrics["bars_exclude"],
+            "bars_zeroed": metrics["bars_zeroed"],
+            "bars_reject": metrics["bars_reject"],
+            "empty_stats": metrics["empty_stats"],
+            "total_empty": metrics["total_empty"],
+            "model_order": metrics["model_order"],
+        })
+
+    show_empty_section = any(view["total_empty"] > 0 for view in views)
+
+    if qmap:
+        qids = sorted(qmap.keys(), key=_qid_key)
+    else:
+        qid_set: Set[str] = set()
+        for rows_list in agg_rows_by_model.values():
+            for rec in rows_list:
+                qid_set.add(rec["qid"])
+        for counter in agg_empty_counter.values():
+            qid_set.update(counter.keys())
+        qids = sorted(qid_set, key=_qid_key)
+
     data_json = json.dumps({
         "meta": {
             "qids": qids,
             "models": models,
             "total_questions": len(qids),
-            "categories": [{"id": str(m), "name": categories_by_major.get(m, f"Chapter {m}")} for m in all_majors],
+            "categories": category_options,
         },
-        "points": points,
-        "bars": bars_exclude,  # backward compat
-        "bars_exclude": bars_exclude,
-        "bars_zeroed": bars_zeroed,
-        "bars_reject": bars_reject,
-        "cat_bars": cat_bars,
+        "order": [view["id"] for view in views],
+        "default": views[0]["id"] if views else "",
+        "graders": {
+            view["id"]: {
+                "label": view["label"],
+                "bars_exclude": view["bars_exclude"],
+                "bars_zeroed": view["bars_zeroed"],
+                "bars_reject": view["bars_reject"],
+                "cat_bars": view["cat_bars"],
+                "total_empty": view["total_empty"],
+            }
+            for view in views
+        },
     })
+
+    default_view = views[0] if views else {"label": "All graders (avg)", "total_empty": 0}
 
     tpl = Template(HTML)
     html = tpl.render(
         total=len(qids),
-        rows_by_model=rows_by_model,
-        model_avgs=model_avgs,
         models=models,
+        views=views,
         data_json=data_json,
-        grader_name=grader_name,
-        empty_stats=empty_stats,
-        total_empty=total_empty,
-        categories=cat_list,
+        default_view=default_view,
+        default_view_id=views[0]["id"] if views else "",
+        category_options=category_options,
+        show_empty_section=show_empty_section,
     )
     html_path.write_text(html, encoding="utf-8")

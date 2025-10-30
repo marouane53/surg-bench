@@ -249,8 +249,8 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
         g = GeminiGrader(model=grader.split(":",1)[1])
 
     # Preload existing graded QIDs and empty QIDs if resuming
-    existing_graded: Dict[str, set] = {}
-    existing_empty: Dict[str, set] = {}
+    existing_graded: Dict[tuple[str, str], set] = {}
+    existing_empty: Dict[tuple[str, str], set] = {}
     if resume:
         for fp in Path(out_dir).glob("scores__*.csv"):
             try:
@@ -260,8 +260,9 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
             for _, row in df_prev.iterrows():
                 m = str(row.get("model", ""))
                 q = str(row.get("qid", ""))
+                grader_name = str(row.get("grader", "")) or "__unknown__"
                 if m and q:
-                    existing_graded.setdefault(m, set()).add(q)
+                    existing_graded.setdefault((m, grader_name), set()).add(q)
         for fp in Path(out_dir).glob("empty_answers__*.csv"):
             try:
                 df_prev = pd.read_csv(fp)
@@ -270,12 +271,13 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
             for _, row in df_prev.iterrows():
                 m = str(row.get("model", ""))
                 q = str(row.get("qid", ""))
+                grader_name = str(row.get("grader", "")) or "__unknown__"
                 if m and q:
-                    existing_empty.setdefault(m, set()).add(q)
+                    existing_empty.setdefault((m, grader_name), set()).add(q)
 
     # Accumulate per-model rows (new work only)
-    rows_by_model: Dict[str, list] = {}
-    empty_by_model: Dict[str, list] = {}
+    rows_by_model: Dict[tuple[str, str], list] = {}
+    empty_by_model: Dict[tuple[str, str], list] = {}
     for path in Path(runs_dir).glob("*.jsonl"):
         prov, model_slug = path.stem.split("__", 1)
         model = model_slug.replace("_", "/")
@@ -288,15 +290,17 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
             if is_empty:
                 model_key = f"{r.model} [{label}]" if label else r.model
+                grader_name = g.name
                 # Skip if already recorded as empty
-                if resume and r.qid in existing_empty.get(model_key, set()):
+                if resume and r.qid in existing_empty.get((model_key, grader_name), set()):
                     info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid}")
                     continue
-                empty_by_model.setdefault(model_key, []).append({
+                empty_by_model.setdefault((model_key, grader_name), []).append({
                     "provider": r.provider,
                     "model": model_key,
                     "qid": r.qid,
-                    "retry_attempts": getattr(r, 'retry_attempts', 0)
+                    "retry_attempts": getattr(r, 'retry_attempts', 0),
+                    "grader": grader_name,
                 })
                 info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid}")
                 continue
@@ -305,7 +309,7 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
             info(f"Grading {r.provider}:{r.model} {r.qid}")
             # Skip if already graded
             model_key = f"{r.model} [{label}]" if label else r.model
-            if resume and r.qid in existing_graded.get(model_key, set()):
+            if resume and r.qid in existing_graded.get((model_key, g.name), set()):
                 info(f"Already graded {r.provider}:{model_key} {r.qid}; skipping")
                 continue
             prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
@@ -317,7 +321,9 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
             info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f}")
             gr = GradedResponse(provider=r.provider, model=model_key, qid=r.qid, answer=r.answer,
                                 grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
-            rows_by_model.setdefault(model_key, []).append(gr.model_dump())
+            row_payload = gr.model_dump()
+            row_payload["grader"] = g.name
+            rows_by_model.setdefault((model_key, g.name), []).append(row_payload)
 
     # Write per-model CSVs
     def _slug(s: str) -> str:
@@ -325,8 +331,9 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
     total_rows = 0
     total_empties = 0
-    for model, rows in rows_by_model.items():
-        csv_path = Path(out_dir) / f"scores__{_slug(model)}.csv"
+    for (model, grader_name), rows in rows_by_model.items():
+        grader_slug = _slug(grader_name)
+        csv_path = Path(out_dir) / f"scores__{_slug(model)}__{grader_slug}.csv"
         df_new = pd.DataFrame(rows)
         if resume and csv_path.exists():
             try:
@@ -342,9 +349,10 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
         total_rows += len(df_new)
         info(f"Wrote {csv_path} ({len(df_new)} new rows)")
 
-    for model, rows in empty_by_model.items():
+    for (model, grader_name), rows in empty_by_model.items():
         if rows:
-            empty_path = Path(out_dir) / f"empty_answers__{_slug(model)}.csv"
+            grader_slug = _slug(grader_name)
+            empty_path = Path(out_dir) / f"empty_answers__{_slug(model)}__{grader_slug}.csv"
             empty_df_new = pd.DataFrame(rows)
             if resume and empty_path.exists():
                 try:
