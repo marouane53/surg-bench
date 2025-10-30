@@ -329,21 +329,21 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
                 if is_empty:
                     if resume and r.qid in existing_empty.get((model_key, grader_name), set()):
-                        info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid}")
-                        continue
-                    empty_by_model.setdefault((model_key, grader_name), []).append({
-                        "provider": r.provider,
-                        "model": model_key,
-                        "qid": r.qid,
+                    info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid} (grader={g.name})")
+                    continue
+                empty_by_model.setdefault((model_key, grader_name), []).append({
+                    "provider": r.provider,
+                    "model": model_key,
+                    "qid": r.qid,
                         "retry_attempts": getattr(r, 'retry_attempts', 0),
                         "grader": grader_name,
                     })
-                    info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid}")
+                    info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid} (grader={g.name})")
                     continue
 
-                info(f"Grading {r.provider}:{r.model} {r.qid}")
+                info(f"Grading {r.provider}:{r.model} {r.qid} with {g.name}")
                 if resume and r.qid in existing_graded.get((model_key, g.name), set()):
-                    info(f"Already graded {r.provider}:{model_key} {r.qid}; skipping")
+                    info(f"Already graded {r.provider}:{model_key} {r.qid} (grader={g.name}); skipping")
                     continue
                 prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
                 try:
@@ -351,7 +351,7 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
                 except Exception as e:
                     warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
                     continue
-                info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f}")
+                info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f} (grader={g.name})")
                 gr = GradedResponse(provider=r.provider, model=model_key, qid=r.qid, answer=r.answer,
                                     grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
                 row_payload = gr.model_dump()
