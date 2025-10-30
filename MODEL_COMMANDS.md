@@ -313,15 +313,16 @@ python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 
 ## OpenRouter Models
 
-### OpenAI GPT-4o (via OpenRouter)
+### Qwen3 VL 235B A22B Thinking (multimodal)
+
 **Run 20 questions:**
 ```bash
-python -m src.evalsys.cli run --models "openrouter:openai/gpt-4o" --limit 20
+python -m src.evalsys.cli run --models "openrouter:qwen/qwen3-vl-235b-a22b-thinking" --limit 20
 ```
 
 **Run full set (290 questions):**
 ```bash
-python -m src.evalsys.cli run --models "openrouter:openai/gpt-4o"
+python -m src.evalsys.cli run --models "openrouter:qwen/qwen3-vl-235b-a22b-thinking"
 ```
 
 **Grade the results:**
@@ -329,9 +330,80 @@ python -m src.evalsys.cli run --models "openrouter:openai/gpt-4o"
 python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
-**Grade with GPT-5 Mini:**
+---
+
+### Z.AI GLM-4.5V (multimodal)
+
+**Run 20 questions:**
 ```bash
-python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+python -m src.evalsys.cli run --models "openrouter:z-ai/glm-4.5v" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openrouter:z-ai/glm-4.5v"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+---
+
+### xAI Grok-4 (multimodal)
+
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "openrouter:x-ai/grok-4" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openrouter:x-ai/grok-4"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+---
+
+### xAI Grok-4 Fast (multimodal)
+
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "openrouter:x-ai/grok-4-fast" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openrouter:x-ai/grok-4-fast"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+---
+
+### Meta Llama 4 Maverick (multimodal)
+
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "openrouter:meta-llama/llama-4-maverick" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openrouter:meta-llama/llama-4-maverick"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ```
 
 ---
@@ -479,4 +551,3 @@ The `--label` parameter is useful when comparing different configurations of the
 - Graded results are saved to `data/out/graded/` by default
 - Reports are generated automatically after grading in `data/out/graded/report.html`
 - Make sure to set appropriate API keys in your `.env` file before running
-

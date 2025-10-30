@@ -10,10 +10,17 @@ class OpenRouterProvider(Provider):
         super().__init__(model)
         base = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         self.client = OpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url=base)
+        mlower = model.lower()
+        # Default: assume multimodal unless we know the routed model is text-only.
+        text_only_models = {
+            "qwen/qwen3-max",
+            "qwen/qwen3-coder-plus",
+            "qwen/qwen3-coder-flash",
+        }
+        self._supports_images = mlower not in text_only_models
 
     def supports_images(self) -> bool:
-        # depends on routed model, we keep images
-        return True
+        return self._supports_images
 
     def ask(self, messages: List[Dict[str, Any]], **kwargs) -> Tuple[str, int]:
         start = time.time()
