@@ -329,12 +329,12 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
                 if is_empty:
                     if resume and r.qid in existing_empty.get((model_key, grader_name), set()):
-                    info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid} (grader={g.name})")
-                    continue
-                empty_by_model.setdefault((model_key, grader_name), []).append({
-                    "provider": r.provider,
-                    "model": model_key,
-                    "qid": r.qid,
+                        info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid} (grader={g.name})")
+                        continue
+                    empty_by_model.setdefault((model_key, grader_name), []).append({
+                        "provider": r.provider,
+                        "model": model_key,
+                        "qid": r.qid,
                         "retry_attempts": getattr(r, 'retry_attempts', 0),
                         "grader": grader_name,
                     })
