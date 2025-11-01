@@ -4,6 +4,7 @@ openai:
   models:
     - gpt-5
     - gpt-5-mini
+    - gpt-5-nano
     - gpt-4o
 openai-reasoning:
   enabled: true
@@ -21,6 +22,7 @@ anthropic:
   models:
     - claude-3-5-sonnet-latest
     - claude-3-opus-20240229
+    - claude-haiku-4-5-20251001
 groq:
   enabled: true
   models:
@@ -37,6 +39,8 @@ openrouter:
   models:
     - openai/gpt-4o
     - anthropic/claude-3.7-sonnet
+    - x-ai/grok-4
+    - x-ai/grok-4-fast
 mistral:
   enabled: false
   models:

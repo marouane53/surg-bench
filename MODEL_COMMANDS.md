@@ -104,6 +104,27 @@ python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
+### GPT-5 Nano (September 2025)
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "openai:gpt-5-nano" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openai:gpt-5-nano"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ### GPT-4o
 **Run 20 questions:**
 ```bash
@@ -226,6 +247,27 @@ python -m src.evalsys.cli run --models "anthropic:claude-opus-4-1-20250805" --li
 **Run full set (290 questions):**
 ```bash
 python -m src.evalsys.cli run --models "anthropic:claude-opus-4-1-20250805"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
+### Claude Haiku 4.5 (October 1, 2025)
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "anthropic:claude-haiku-4-5-20251001" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "anthropic:claude-haiku-4-5-20251001"
 ```
 
 **Grade the results:**
