@@ -24,8 +24,8 @@ anthropic:
 groq:
   enabled: true
   models:
-    - llama-3.3-70b-versatile
-    - llama3-8b-8192
+    - meta-llama/llama-4-scout-17b-16e-instruct
+    - meta-llama/llama-4-maverick-17b-128e-instruct
 xai:
   enabled: true
   base_url: ${XAI_BASE_URL:https://api.x.ai/v1}

@@ -426,7 +426,7 @@ python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 ### Specific Provider Testing
 Test individual providers:
 ```bash
-python -m src.evalsys.cli run --models "groq:llama-3.3-70b-versatile" --limit 10
+python -m src.evalsys.cli run --models "groq:meta-llama/llama-4-scout-17b-16e-instruct" --limit 10
 ```
 
 ### Batch Processing

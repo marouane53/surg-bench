@@ -242,15 +242,17 @@ python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 
 ## Groq Models
 
-### Llama 3.3 70B Versatile
+These 2025 Groq-hosted Llama 4 models support multimodal (vision + text) reasoning. They accept the base64 data URLs emitted by the dataset pipeline, so no extra preprocessing is needed before running image-heavy questions. Groq currently exposes vision through its "Vision Beta" entitlement; free-tier accounts will receive a 403 if the beta flag is not enabled.
+
+### Llama 4 Scout 17B Vision (May 2025)
 **Run 20 questions:**
 ```bash
-python -m src.evalsys.cli run --models "groq:llama-3.3-70b-versatile" --limit 20
+python -m src.evalsys.cli run --models "groq:meta-llama/llama-4-scout-17b-16e-instruct" --limit 20
 ```
 
 **Run full set (290 questions):**
 ```bash
-python -m src.evalsys.cli run --models "groq:llama-3.3-70b-versatile"
+python -m src.evalsys.cli run --models "groq:meta-llama/llama-4-scout-17b-16e-instruct"
 ```
 
 **Grade the results:**
@@ -263,15 +265,15 @@ python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
-### Llama 3 8B
+### Llama 4 Maverick 17B Vision (June 2025)
 **Run 20 questions:**
 ```bash
-python -m src.evalsys.cli run --models "groq:llama3-8b-8192" --limit 20
+python -m src.evalsys.cli run --models "groq:meta-llama/llama-4-maverick-17b-128e-instruct" --limit 20
 ```
 
 **Run full set (290 questions):**
 ```bash
-python -m src.evalsys.cli run --models "groq:llama3-8b-8192"
+python -m src.evalsys.cli run --models "groq:meta-llama/llama-4-maverick-17b-128e-instruct"
 ```
 
 **Grade the results:**
