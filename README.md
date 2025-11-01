@@ -85,6 +85,17 @@ python -m src.evalsys.cli run --models "openai-reasoning:gpt-5,gemini:gemini-2.5
 ```
 This generates model responses in `data/out/runs/`
 
+> **Tip:** omit `--limit` to run the full dataset (290 questions). The CLI now defaults to the complete set when no limit is provided, so add `--limit` only when you want a smaller smoke test.
+
+While a run is in progress, you can tail the live JSONL output to see progress or resume after an interruption:
+
+```bash
+tail -f data/out/runs/openai-reasoning__gpt-5.jsonl
+```
+
+- Each answer is appended immediately; if the process stops, rerun with `--resume` to skip completed QIDs.
+- The filename pattern is `<provider>__<model>.jsonl` with slashes replaced by underscores.
+
 ### 3. Grade Responses
 ```bash
 # run both default graders (GPT-5 Mini, then Gemini 2.5 Flash)

@@ -94,7 +94,7 @@ def _safe_ask(pv, messages, **kwargs):
 def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-flash,anthropic:claude-3-5-sonnet-latest",
                                    help="Comma sep provider:model pairs"),
         dataset: str = typer.Option("data/out/dataset.jsonl"),
-        limit: int = typer.Option(50, help="Number of questions to run"),
+        limit: int = typer.Option(0, help="Number of questions to run (0 = full dataset)"),
         out_dir: str = typer.Option("data/out/runs"),
         max_tokens: int = typer.Option(0, help="Max output tokens (provider-specific). 0 = auto (8192 for OpenAI reasoning)"),
         reasoning_effort: Optional[str] = typer.Option(None, help="OpenAI reasoning effort for GPT-5: minimal, low, medium, high"),
@@ -103,7 +103,11 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
     # ensure env vars from .env are available for providers (OPENAI_API_KEY, GEMINI_API_KEY, ...)
     _load_env_file()
     cfg = load_config()
-    items = _load_dataset(dataset)[:limit]
+    all_items = _load_dataset(dataset)
+    if isinstance(limit, int) and limit > 0:
+        items = all_items[:limit]
+    else:
+        items = all_items
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     pairs = [m.strip() for m in models.split(",") if m.strip()]
@@ -163,71 +167,73 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                 warn(f"Could not read existing run file {out_path}; starting fresh")
 
         info(f"Running {provider_name}:{model} on {len(items)} items")
-        recs: List[ModelResponse] = []
-        for it in items:
-            if resume and it.qid in completed_qids:
-                # Skip already answered question
-                info(f"Skipping {it.qid} (already answered)")
-                continue
-            # Log which question is being asked
-            q_preview = it.question_text if len(it.question_text) <= 120 else (it.question_text[:117] + "...")
-            info(f"Asking {provider_name}:{model} {it.qid} — {q_preview}")
-            msg = pack_messages_for_question(it)
-            if not pv.supports_images():
-                # remove images
-                if isinstance(msg["messages"][1]["content"], list):
-                    msg["messages"][1]["content"] = [x for x in msg["messages"][1]["content"] if x.get("type")=="text"]
-            
-            # Retry logic for empty answers
-            text = ""
-            total_ms = 0
-            retry_count = 0
-            max_retries = cfg.empty_answer_retries
-            
-            for attempt in range(max_retries + 1):  # +1 for initial attempt
-                call_kwargs = {}
-                if isinstance(max_tokens, int) and max_tokens > 0:
-                    call_kwargs["max_tokens"] = max_tokens
-                if provider_name == "anthropic" and anthropic_thinking_budget:
-                    call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": int(anthropic_thinking_budget)}
-                text, ms = _safe_ask(pv, msg["messages"], **call_kwargs)
-                total_ms += ms
-                
-                # Check if answer is empty (only whitespace)
-                if text and text.strip():
-                    break  # Got a non-empty answer, stop retrying
-                
-                if attempt < max_retries:  # Don't increment on last attempt
-                    retry_count += 1
-                    warn(f"Empty answer from {provider_name}:{model} for {it.qid}, retrying ({retry_count}/{max_retries})")
-            
-            # Mark as empty if final answer is still empty
-            is_empty = not (text and text.strip())
-            if is_empty:
-                warn(f"Final answer is empty for {provider_name}:{model} {it.qid} after {retry_count} retries")
-                info(f"Answered {it.qid}: empty")
-            else:
-                ans_len = len(text.strip()) if text else 0
-                info(f"Answered {it.qid}: non-empty ({ans_len} chars)")
-            
+        if not resume or not out_path.exists():
+            # Truncate to start fresh so progress is written incrementally
+            with out_path.open("w", encoding="utf-8"):
+                pass
+        written = 0
+        with out_path.open("a", encoding="utf-8") as run_file:
+            for it in items:
+                if resume and it.qid in completed_qids:
+                    # Skip already answered question
+                    info(f"Skipping {it.qid} (already answered)")
+                    continue
+                # Log which question is being asked
+                q_preview = it.question_text if len(it.question_text) <= 120 else (it.question_text[:117] + "...")
+                info(f"Asking {provider_name}:{model} {it.qid} — {q_preview}")
+                msg = pack_messages_for_question(it)
+                if not pv.supports_images():
+                    # remove images
+                    if isinstance(msg["messages"][1]["content"], list):
+                        msg["messages"][1]["content"] = [x for x in msg["messages"][1]["content"] if x.get("type")=="text"]
 
-            recs.append(ModelResponse(
-                provider=provider_name, 
-                model=model, 
-                qid=it.qid, 
-                answer=text, 
-                latency_ms=total_ms, 
-                used_images=len(it.images),
-                retry_attempts=retry_count,
-                is_empty_answer=is_empty
-            ))
-        # Write/append
-        mode = "a" if (resume and out_path.exists()) else "w"
-        with out_path.open(mode, encoding="utf-8") as f:
-            for r in recs:
-                f.write(r.model_dump_json() + "\n")
-        if recs:
-            info(f"Wrote {len(recs)} records to {out_path} ({'append' if mode=='a' else 'new file'})")
+                # Retry logic for empty answers
+                text = ""
+                total_ms = 0
+                retry_count = 0
+                max_retries = cfg.empty_answer_retries
+
+                for attempt in range(max_retries + 1):  # +1 for initial attempt
+                    call_kwargs = {}
+                    if isinstance(max_tokens, int) and max_tokens > 0:
+                        call_kwargs["max_tokens"] = max_tokens
+                    if provider_name == "anthropic" and anthropic_thinking_budget:
+                        call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": int(anthropic_thinking_budget)}
+                    text, ms = _safe_ask(pv, msg["messages"], **call_kwargs)
+                    total_ms += ms
+
+                    # Check if answer is empty (only whitespace)
+                    if text and text.strip():
+                        break  # Got a non-empty answer, stop retrying
+
+                    if attempt < max_retries:  # Don't increment on last attempt
+                        retry_count += 1
+                        warn(f"Empty answer from {provider_name}:{model} for {it.qid}, retrying ({retry_count}/{max_retries})")
+
+                # Mark as empty if final answer is still empty
+                is_empty = not (text and text.strip())
+                if is_empty:
+                    warn(f"Final answer is empty for {provider_name}:{model} {it.qid} after {retry_count} retries")
+                    info(f"Answered {it.qid}: empty")
+                else:
+                    ans_len = len(text.strip()) if text else 0
+                    info(f"Answered {it.qid}: non-empty ({ans_len} chars)")
+
+                record = ModelResponse(
+                    provider=provider_name,
+                    model=model,
+                    qid=it.qid,
+                    answer=text,
+                    latency_ms=total_ms,
+                    used_images=len(it.images),
+                    retry_attempts=retry_count,
+                    is_empty_answer=is_empty,
+                )
+                run_file.write(record.model_dump_json() + "\n")
+                run_file.flush()
+                written += 1
+        if written:
+            info(f"Persisted {written} new records to {out_path}")
         else:
             info(f"No new records to write for {provider_name}:{model}")
 
