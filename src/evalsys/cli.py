@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, time
+import csv, json, os, sys, time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 import typer
@@ -24,6 +24,25 @@ from ..providers.mistral_provider import MistralProvider
 from ..providers.cohere_provider import CohereProvider
 
 from ..grading.llm_grader import OpenAIGrader, GeminiGrader
+
+_ALL_GRADERS_SENTINEL = "__ALL_GRADERS__"
+
+
+def _normalize_grade_args(argv: List[str]) -> None:
+    """Allow `--grader` without an explicit value by inserting a sentinel."""
+    if len(argv) < 2 or argv[1] != "grade":
+        return
+    i = 2
+    while i < len(argv):
+        if argv[i] == "--grader":
+            needs_value = i == len(argv) - 1 or argv[i + 1].startswith("-")
+            if needs_value:
+                argv.insert(i + 1, _ALL_GRADERS_SENTINEL)
+                i += 1  # skip sentinel we just inserted
+        i += 1
+
+
+_normalize_grade_args(sys.argv)
 
 
 def _load_env_file(path: str = ".env") -> None:
@@ -253,8 +272,6 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
             log_file.write(log_line)
         info(f"Run finished in {elapsed/60:.2f} min; log entry written to {log_path}")
 
-_ALL_GRADERS_SENTINEL = "__ALL_GRADERS__"
-
 
 @app.command()
 def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
@@ -262,8 +279,7 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
           grader: Optional[str] = typer.Option(
               None,
               "--grader",
-              help="Target grader(s). Provide provider:model, a comma-separated list, or pass --grader with no value to run GPT-5 Mini and Gemini 2.5 Flash sequentially.",
-              flag_value=_ALL_GRADERS_SENTINEL,
+              help="Target grader(s). Provide provider:model or comma-separated list. Pass --grader with no value to run GPT-5 Mini and Gemini 2.5 Flash sequentially.",
           ),
           out_dir: str = typer.Option("data/out/graded"),
           label: Optional[str] = typer.Option(None, help="Optional label to append to model names in outputs, e.g., 'chat' or 'minimal'"),
@@ -335,87 +351,131 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
                     if m and q:
                         existing_empty.setdefault((m, grader_name), set()).add(q)
 
-        rows_by_model: Dict[tuple[str, str], list] = {}
-        empty_by_model: Dict[tuple[str, str], list] = {}
-        for path in Path(runs_dir).glob("*.jsonl"):
-            prov, model_slug = path.stem.split("__", 1)
-            model = model_slug.replace("_", "/")
-            for line in path.read_text(encoding="utf-8").splitlines():
-                r = ModelResponse.model_validate_json(line)
-                it = items[r.qid]
+        score_handles: Dict[tuple[str, str], tuple[Any, Any, Path]] = {}
+        empty_handles: Dict[tuple[str, str], tuple[Any, Any, Path]] = {}
 
-                is_empty = getattr(r, 'is_empty_answer', False) or not (r.answer and r.answer.strip())
+        def _get_score_writer(model_key: str, grader_name: str):
+            key = (model_key, grader_name)
+            if key not in score_handles:
+                grader_slug = _slug(grader_name)
+                csv_path = Path(out_dir) / f"scores__{_slug(model_key)}__{grader_slug}.csv"
+                exists = csv_path.exists() and csv_path.stat().st_size > 0
+                fh = csv_path.open("a", encoding="utf-8", newline="")
+                writer = csv.DictWriter(
+                    fh,
+                    fieldnames=["provider", "model", "qid", "answer", "grader", "score", "justification", "missed", "harmful"],
+                )
+                if not exists:
+                    writer.writeheader()
+                score_handles[key] = (fh, writer, csv_path)
+            return score_handles[key]
 
-                model_key = f"{r.model} [{label}]" if label else r.model
-                grader_name = g.name
+        def _get_empty_writer(model_key: str, grader_name: str):
+            key = (model_key, grader_name)
+            if key not in empty_handles:
+                grader_slug = _slug(grader_name)
+                csv_path = Path(out_dir) / f"empty_answers__{_slug(model_key)}__{grader_slug}.csv"
+                exists = csv_path.exists() and csv_path.stat().st_size > 0
+                fh = csv_path.open("a", encoding="utf-8", newline="")
+                writer = csv.DictWriter(
+                    fh,
+                    fieldnames=["provider", "model", "qid", "retry_attempts", "grader"],
+                )
+                if not exists:
+                    writer.writeheader()
+                empty_handles[key] = (fh, writer, csv_path)
+            return empty_handles[key]
 
-                if is_empty:
-                    if resume and r.qid in existing_empty.get((model_key, grader_name), set()):
-                        info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid} (grader={g.name})")
-                        continue
-                    empty_by_model.setdefault((model_key, grader_name), []).append({
-                        "provider": r.provider,
-                        "model": model_key,
-                        "qid": r.qid,
-                        "retry_attempts": getattr(r, 'retry_attempts', 0),
-                        "grader": grader_name,
-                    })
-                    info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid} (grader={g.name})")
-                    continue
-
-                info(f"Grading {r.provider}:{r.model} {r.qid} with {g.name}")
-                if resume and r.qid in existing_graded.get((model_key, g.name), set()):
-                    info(f"Already graded {r.provider}:{model_key} {r.qid} (grader={g.name}); skipping")
-                    continue
-                prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
-                try:
-                    score, just, missed, harmful = g.grade(prompt)
-                except Exception as e:
-                    warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
-                    continue
-                info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f} (grader={g.name})")
-                gr = GradedResponse(provider=r.provider, model=model_key, qid=r.qid, answer=r.answer,
-                                    grader=g.name, score=score, justification=just, missed=missed, harmful=harmful)
-                row_payload = gr.model_dump()
-                row_payload["grader"] = g.name
-                rows_by_model.setdefault((model_key, g.name), []).append(row_payload)
-
+        new_row_counts: Dict[tuple[str, str], int] = {}
+        new_empty_counts: Dict[tuple[str, str], int] = {}
         total_rows = 0
         total_empties = 0
-        for (model, grader_name), rows in rows_by_model.items():
-            grader_slug = _slug(grader_name)
-            csv_path = Path(out_dir) / f"scores__{_slug(model)}__{grader_slug}.csv"
-            df_new = pd.DataFrame(rows)
-            if resume and csv_path.exists():
-                try:
-                    df_prev = pd.read_csv(csv_path)
-                    df_all = pd.concat([df_prev, df_new], ignore_index=True)
-                    df_all = df_all.drop_duplicates(subset=["qid"], keep="first")
-                except Exception:
-                    df_all = df_new
-            else:
-                df_all = df_new
-            df_all.to_csv(csv_path, index=False)
-            total_rows += len(df_new)
-            info(f"Wrote {csv_path} ({len(df_new)} new rows)")
 
-        for (model, grader_name), rows in empty_by_model.items():
-            if rows:
-                grader_slug = _slug(grader_name)
-                empty_path = Path(out_dir) / f"empty_answers__{_slug(model)}__{grader_slug}.csv"
-                empty_df_new = pd.DataFrame(rows)
-                if resume and empty_path.exists():
+        for path in Path(runs_dir).glob("*.jsonl"):
+            if "__" not in path.stem:
+                continue
+            prov, model_slug = path.stem.split("__", 1)
+            with path.open("r", encoding="utf-8") as fh:
+                for raw_line in fh:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    r = ModelResponse.model_validate_json(line)
+                    it = items[r.qid]
+
+                    is_empty = getattr(r, 'is_empty_answer', False) or not (r.answer and r.answer.strip())
+
+                    model_key = f"{r.model} [{label}]" if label else r.model
+                    grader_name = g.name
+
+                    model_tuple = (model_key, grader_name)
+
+                    if is_empty:
+                        if resume and r.qid in existing_empty.get(model_tuple, set()):
+                            info(f"Skipping empty record (already recorded): {r.provider}:{model_key} {r.qid} (grader={g.name})")
+                            continue
+                        info(f"Skipping grading for empty answer: {r.provider}:{model_key} {r.qid} (grader={g.name})")
+                        empty_payload = {
+                            "provider": r.provider,
+                            "model": model_key,
+                            "qid": r.qid,
+                            "retry_attempts": getattr(r, 'retry_attempts', 0),
+                            "grader": grader_name,
+                        }
+                        fh_empty, writer_empty, empty_path = _get_empty_writer(model_key, grader_name)
+                        writer_empty.writerow(empty_payload)
+                        fh_empty.flush()
+                        existing_empty.setdefault(model_tuple, set()).add(r.qid)
+                        new_empty_counts[model_tuple] = new_empty_counts.get(model_tuple, 0) + 1
+                        total_empties += 1
+                        continue
+
+                    if resume and r.qid in existing_graded.get(model_tuple, set()):
+                        info(f"Already graded {r.provider}:{model_key} {r.qid} (grader={g.name}); skipping")
+                        continue
+
+                    info(f"Grading {r.provider}:{r.model} {r.qid} with {g.name}")
+                    prompt = build_grading_prompt(it.question_text, it.answer_text or "", r.answer)
                     try:
-                        empty_prev = pd.read_csv(empty_path)
-                        empty_all = pd.concat([empty_prev, empty_df_new], ignore_index=True)
-                        empty_all = empty_all.drop_duplicates(subset=["qid"], keep="first")
-                    except Exception:
-                        empty_all = empty_df_new
-                else:
-                    empty_all = empty_df_new
-                empty_all.to_csv(empty_path, index=False)
-                total_empties += len(rows)
-                info(f"Wrote empty answer stats to {empty_path} ({len(rows)} new)")
+                        score, just, missed, harmful = g.grade(prompt)
+                    except Exception as e:
+                        warn(f"Grading failed for {r.provider}:{r.model} {r.qid}: {e}; skipping")
+                        continue
+                    info(f"Scored {r.provider}:{r.model} {r.qid} = {score:.3f} (grader={g.name})")
+
+                    gr = GradedResponse(
+                        provider=r.provider,
+                        model=model_key,
+                        qid=r.qid,
+                        answer=r.answer,
+                        grader=g.name,
+                        score=score,
+                        justification=just,
+                        missed=missed,
+                        harmful=harmful,
+                    )
+                    row_payload = gr.model_dump()
+                    row_payload["missed"] = json.dumps(row_payload.get("missed", []))
+                    fh_score, writer_score, score_path = _get_score_writer(model_key, g.name)
+                    writer_score.writerow(row_payload)
+                    fh_score.flush()
+                    existing_graded.setdefault(model_tuple, set()).add(r.qid)
+                    new_row_counts[model_tuple] = new_row_counts.get(model_tuple, 0) + 1
+                    total_rows += 1
+
+        for fh, _, _ in score_handles.values():
+            fh.flush()
+            fh.close()
+        for fh, _, _ in empty_handles.values():
+            fh.flush()
+            fh.close()
+
+        for (model_key, grader_name), count in new_row_counts.items():
+            _, _, path = score_handles[(model_key, grader_name)]
+            info(f"Appended {count} new rows to {path}")
+        for (model_key, grader_name), count in new_empty_counts.items():
+            _, _, path = empty_handles[(model_key, grader_name)]
+            info(f"Appended {count} empty records to {path}")
 
         if total_rows + total_empties > 0:
             info(f"Empty answers: {total_empties}/{total_rows + total_empties} ({(total_empties/(total_rows+total_empties))*100:.1f}%)")

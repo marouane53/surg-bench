@@ -111,6 +111,8 @@ This creates per-model CSVs in `data/out/graded/` and a unified report:
 - `empty_answers__<model>__<grader>.csv` for empty answers per model/grader pair (if any)
 - `report.html` combining all per-model results
 
+> **Progress tracking:** grading files update after each question. If grading is interrupted, rerun with `--resume` (default) and the CLI will skip QIDs already written to the CSVs.
+
 `--grader` accepts:
 
 - *No value* (flag only): runs GPT-5 Mini first, then Gemini 2.5 Flash sequentially.
