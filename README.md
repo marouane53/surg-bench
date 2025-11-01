@@ -95,6 +95,7 @@ tail -f data/out/runs/openai-reasoning__gpt-5.jsonl
 
 - Each answer is appended immediately; if the process stops, rerun with `--resume` to skip completed QIDs.
 - The filename pattern is `<provider>__<model>.jsonl` with slashes replaced by underscores.
+- Overall timing for each run is appended to `data/out/runs/run_history.log`, including the provider/model, dataset size, number of new answers, and total elapsed seconds.
 
 ### 3. Grade Responses
 ```bash

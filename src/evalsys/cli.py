@@ -167,16 +167,20 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                 warn(f"Could not read existing run file {out_path}; starting fresh")
 
         info(f"Running {provider_name}:{model} on {len(items)} items")
+        run_started_at = time.time()
         if not resume or not out_path.exists():
             # Truncate to start fresh so progress is written incrementally
             with out_path.open("w", encoding="utf-8"):
                 pass
         written = 0
+        asked = 0
+        skipped = 0
         with out_path.open("a", encoding="utf-8") as run_file:
             for it in items:
                 if resume and it.qid in completed_qids:
                     # Skip already answered question
                     info(f"Skipping {it.qid} (already answered)")
+                    skipped += 1
                     continue
                 # Log which question is being asked
                 q_preview = it.question_text if len(it.question_text) <= 120 else (it.question_text[:117] + "...")
@@ -192,6 +196,7 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                 total_ms = 0
                 retry_count = 0
                 max_retries = cfg.empty_answer_retries
+                asked += 1
 
                 for attempt in range(max_retries + 1):  # +1 for initial attempt
                     call_kwargs = {}
@@ -236,6 +241,17 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
             info(f"Persisted {written} new records to {out_path}")
         else:
             info(f"No new records to write for {provider_name}:{model}")
+
+        elapsed = time.time() - run_started_at
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        log_path = Path(out_dir) / "run_history.log"
+        log_line = (
+            f"{timestamp} provider={provider_name} model={model} dataset={dataset} "
+            f"total_items={len(items)} asked={asked} skipped={skipped} wrote={written} elapsed_sec={elapsed:.2f}\n"
+        )
+        with log_path.open("a", encoding="utf-8") as log_file:
+            log_file.write(log_line)
+        info(f"Run finished in {elapsed/60:.2f} min; log entry written to {log_path}")
 
 _ALL_GRADERS_SENTINEL = "__ALL_GRADERS__"
 
