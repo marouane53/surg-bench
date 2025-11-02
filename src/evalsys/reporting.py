@@ -463,9 +463,15 @@ HTML = """
         if (!bars.length) {
           return;
         }
-        const rowH = Math.max(18, Math.min(40, innerH / bars.length));
-        const gap = 8;
-        const totalH = bars.length * (rowH + gap) - gap;
+        let rowH = Math.max(18, Math.min(40, innerH / bars.length));
+        let gap = Math.max(6, Math.min(12, rowH * 0.35));
+        let totalH = bars.length * (rowH + gap) - gap;
+        if (totalH > innerH) {
+          const scale = innerH / totalH;
+          rowH *= scale;
+          gap *= scale;
+          totalH = bars.length * (rowH + gap) - gap;
+        }
         const offsetY = PADDING.t + Math.max(0, (innerH - totalH)/2);
         bars.forEach((b, i) => {
           const y = offsetY + i*(rowH+gap);
