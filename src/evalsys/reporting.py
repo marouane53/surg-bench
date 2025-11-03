@@ -105,6 +105,18 @@ HTML = """
     table.cat tbody tr { border-left: 4px solid transparent; transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, filter 0.2s ease; }
     table.cat tbody tr td { transition: color 0.25s ease; }
     table.cat tbody tr:hover { filter: brightness(1.05); }
+    .table-wrap { width: 100%; overflow-x: auto; }
+    table.rankings { width: 100%; border-collapse: collapse; min-width: 540px; }
+    table.rankings thead th { padding: 8px 10px; font-size: 12px; text-align: left; color: var(--muted); border-bottom: 1px solid #262b49; position: relative; cursor: pointer; }
+    table.rankings thead th.sort-disabled { cursor: default; }
+    table.rankings thead th.active { color: var(--text); }
+    table.rankings thead th::after { content: ''; position: absolute; right: 8px; top: 50%; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid transparent; border-bottom: 6px solid transparent; transform: translateY(-50%); opacity: 0.2; transition: opacity 0.2s ease, transform 0.2s ease; }
+    table.rankings thead th[data-sort-dir="desc"]::after { border-top: 6px solid var(--muted); border-bottom: none; opacity: 0.6; transform: translateY(-60%); }
+    table.rankings thead th[data-sort-dir="asc"]::after { border-bottom: 6px solid var(--muted); border-top: none; opacity: 0.6; transform: translateY(-40%); }
+    table.rankings tbody td { padding: 8px 10px; font-size: 12px; border-bottom: 1px solid #262b49; white-space: nowrap; }
+    table.rankings tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    table.rankings tbody td.rank-cell { width: 48px; text-align: right; font-weight: 600; color: var(--muted); }
+    table.rankings tbody tr:hover { filter: brightness(1.05); }
 
     .empty-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
     .empty-card { padding: 8px 12px; background: var(--panel-2); border-radius: 8px; border: 1px solid var(--grid); }
@@ -224,15 +236,15 @@ HTML = """
                   <div class="answer">
                     <table class="cat">
                       <thead>
-                        <tr><th>Model</th><th>Provider</th><th>Avg (answered)</th><th>Avg (zeroed)</th><th>Answered</th><th>Rejects</th><th>Total</th></tr>
+                        <tr><th>Model</th><th>Provider</th><th>Avg (zeroed)</th><th>Avg (answered)</th><th>Answered</th><th>Rejects</th><th>Total</th></tr>
                       </thead>
                       <tbody>
                       {% for row in cat.model_rows %}
                         <tr data-score="{{ "%.4f"|format(row.avg_zeroed) }}">
                           <td>{{ row.model }}</td>
                           <td class="muted">{{ row.provider }}</td>
-                          <td>{{ "%.3f"|format(row.avg_answered) }}</td>
                           <td>{{ "%.3f"|format(row.avg_zeroed) }}</td>
+                          <td>{{ "%.3f"|format(row.avg_answered) }}</td>
                           <td>{{ row.n_answered }}</td>
                           <td>{{ row.n_reject }}</td>
                           <td>{{ row.n_total }}</td>
@@ -245,6 +257,59 @@ HTML = """
               {% endfor %}
             {% else %}
               <div class="muted">No category statistics for this grader yet.</div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="card" id="rankingCard">
+      <div class="hd">
+        <strong>Model Rankings</strong>
+        <div class="muted">Overall ranking with per-category averages (click a column to re-rank)</div>
+      </div>
+      <div class="bd">
+        {% for view in views %}
+          <div class="view-block" data-grader-view="{{ view.id }}" data-section="rankings" {% if not view.active %}style="display:none"{% endif %}>
+            {% set ranking = view.rankings %}
+            {% if ranking.rows %}
+              <div class="table-wrap">
+                <table class="rankings" data-view="{{ view.id }}">
+                  <thead>
+                    <tr>
+                      <th class="sort-disabled">Rank</th>
+                      <th data-sort="model">Model</th>
+                      <th data-sort="provider">Provider</th>
+                      <th data-sort="overall" data-default-sort="true" data-sort-dir="desc">Overall Avg (zeroed)</th>
+                      {% for cat in ranking.categories %}
+                        <th data-sort="cat-{{ cat.id }}">{{ cat.name }}</th>
+                      {% endfor %}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in ranking.rows %}
+                      <tr>
+                        <td class="rank-cell">{{ loop.index }}</td>
+                        <td data-col="model">{{ row.model }}</td>
+                        <td class="muted" data-col="provider">{{ row.provider }}</td>
+                        <td class="num" data-col="overall" data-value="{{ "%.6f"|format(row.overall_zeroed) }}" title="Answered avg: {{ "%.3f"|format(row.overall_answered) }} &#183; Answered: {{ row.n_answered }} &#183; Rejects: {{ row.n_reject }}">
+                          {{ "%.3f"|format(row.overall_zeroed) }}
+                        </td>
+                        {% for cat in ranking.categories %}
+                          {% set score = row.category_scores.get(cat.id) %}
+                          {% if score is not none %}
+                            <td class="num" data-col="cat-{{ cat.id }}" data-value="{{ "%.6f"|format(score) }}">{{ "%.3f"|format(score) }}</td>
+                          {% else %}
+                            <td class="num" data-col="cat-{{ cat.id }}" data-value="">{{ "&mdash;"|safe }}</td>
+                          {% endif %}
+                        {% endfor %}
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <div class="muted">No ranking data for this grader yet.</div>
             {% endif %}
           </div>
         {% endfor %}
@@ -401,6 +466,8 @@ HTML = """
       const comparisonResults = document.getElementById('comparisonResults');
       const comparisonSortToggle = document.getElementById('comparisonSortToggle');
       let comparisonSortMode = 'qid';
+      const rankingTablesByView = new Map();
+      const rankingStates = new Map();
 
       const colorForIdx = (i) => {
         const hue = (i * 137.508) % 360;
@@ -596,35 +663,160 @@ HTML = """
             el.style.display = '';
           } else {
             el.style.display = (cat === currentCat) ? '' : 'none';
-          }
-        });
       }
+    });
+  }
 
-      function applyCategory(catId, animate=true) {
-        currentCat = catId || '';
-        updateBarsForSelection();
-        if (!currentCat) {
-          titleEl.textContent = 'All Questions Accounted (ranked)';
-        } else {
-          const found = categories.find((c) => c.id === currentCat);
-          titleEl.textContent = `Category ${currentCat}${found ? ' · ' + found.name : ''}`;
-        }
-        if (mode === 'reject') {
-          hintEl.textContent = 'Higher is worse — hover for details';
-        } else if (mode === 'zeroed') {
-          hintEl.textContent = 'Counts rejections as 0 — hover for details';
-        } else {
-          hintEl.textContent = 'Excludes rejections — hover for details';
-        }
-        updateQuestionVisibility();
-        if (animate) {
-          animStart = null;
-          requestAnimationFrame(animateBars);
-        } else {
-          render(1);
-        }
-        refreshCategoryColorsFor(currentGrader);
+  function ensureRankingState(table) {
+    if (!rankingStates.has(table)) {
+      rankingStates.set(table, { lastKey: null, lastDir: 'desc', manual: false });
+    }
+    return rankingStates.get(table);
+  }
+
+  function updateRankingRanks(table) {
+    const rows = table.querySelectorAll('tbody tr');
+    rows.forEach((row, idx) => {
+      const cell = row.querySelector('.rank-cell');
+      if (cell) cell.textContent = idx + 1;
+    });
+  }
+
+  function parseRankingValue(cell) {
+    if (!cell) return Number.NEGATIVE_INFINITY;
+    const raw = cell.dataset.value;
+    if (raw === undefined || raw === '') return Number.NEGATIVE_INFINITY;
+    const num = parseFloat(raw);
+    return Number.isNaN(num) ? Number.NEGATIVE_INFINITY : num;
+  }
+
+  function sortRankingTable(table, key, direction='desc') {
+    const body = table.querySelector('tbody');
+    if (!body) return;
+    const rows = Array.from(body.querySelectorAll('tr'));
+    if (!rows.length) return;
+    const descending = direction !== 'asc';
+    rows.sort((rowA, rowB) => {
+      if (key === 'model' || key === 'provider') {
+        const aText = (rowA.querySelector(`[data-col="${key}"]`)?.textContent || '').trim().toLowerCase();
+        const bText = (rowB.querySelector(`[data-col="${key}"]`)?.textContent || '').trim().toLowerCase();
+        const cmp = aText.localeCompare(bText);
+        return descending ? -cmp : cmp;
       }
+      const aVal = parseRankingValue(rowA.querySelector(`[data-col="${key}"]`));
+      const bVal = parseRankingValue(rowB.querySelector(`[data-col="${key}"]`));
+      if (aVal === bVal) {
+        const aModel = (rowA.querySelector('[data-col="model"]')?.textContent || '').trim().toLowerCase();
+        const bModel = (rowB.querySelector('[data-col="model"]')?.textContent || '').trim().toLowerCase();
+        return aModel.localeCompare(bModel);
+      }
+      if (descending) {
+        return aVal > bVal ? -1 : 1;
+      }
+      return aVal > bVal ? 1 : -1;
+    });
+    rows.forEach((row) => body.appendChild(row));
+    updateRankingRanks(table);
+  }
+
+  function applyRankingSort(table, key, direction='desc', manual=false) {
+    if (!table || !key) return;
+    const headers = table.querySelectorAll('thead th[data-sort]');
+    headers.forEach((hdr) => {
+      hdr.classList.remove('active');
+      hdr.removeAttribute('data-sort-dir');
+    });
+    const target = Array.from(headers).find((hdr) => hdr.dataset.sort === key);
+    if (!target) {
+      updateRankingRanks(table);
+      return;
+    }
+    target.classList.add('active');
+    target.setAttribute('data-sort-dir', direction);
+    sortRankingTable(table, key, direction);
+    const state = ensureRankingState(table);
+    state.lastKey = key;
+    state.lastDir = direction;
+    state.manual = manual;
+  }
+
+  function setupRankingTable(table) {
+    if (!table) return;
+    const viewId = table.dataset.view;
+    if (viewId) {
+      rankingTablesByView.set(viewId, table);
+    }
+    const headers = table.querySelectorAll('thead th[data-sort]');
+    headers.forEach((th) => {
+      if (!th.dataset.sort || th.classList.contains('sort-disabled')) {
+        return;
+      }
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (!key) return;
+        const isActive = th.classList.contains('active');
+        const currentDir = th.getAttribute('data-sort-dir') || 'desc';
+        const nextDir = isActive ? (currentDir === 'desc' ? 'asc' : 'desc') : 'desc';
+        applyRankingSort(table, key, nextDir, true);
+      });
+    });
+    const defaultHeader = table.querySelector('thead th[data-default-sort="true"]');
+    if (defaultHeader && defaultHeader.dataset.sort) {
+      const dir = defaultHeader.getAttribute('data-sort-dir') || 'desc';
+      applyRankingSort(table, defaultHeader.dataset.sort, dir, false);
+    } else {
+      updateRankingRanks(table);
+    }
+  }
+
+  function setupRankingTables() {
+    document.querySelectorAll('table.rankings').forEach((table) => setupRankingTable(table));
+  }
+
+  function syncRankingSortWithCategory() {
+    const table = rankingTablesByView.get(currentGrader);
+    if (!table) return;
+    const targetKey = currentCat ? `cat-${currentCat}` : 'overall';
+    const header = table.querySelector(`thead th[data-sort="${targetKey}"]`);
+    if (!header) {
+      updateRankingRanks(table);
+      return;
+    }
+    const state = ensureRankingState(table);
+    const desiredDir = 'desc';
+    const alreadyActive = header.classList.contains('active');
+    if (alreadyActive && state.lastKey === targetKey && state.lastDir === desiredDir && state.manual) {
+      return;
+    }
+    applyRankingSort(table, targetKey, desiredDir, false);
+  }
+
+  function applyCategory(catId, animate=true) {
+    currentCat = catId || '';
+    updateBarsForSelection();
+    if (!currentCat) {
+      titleEl.textContent = 'All Questions Accounted (ranked)';
+    } else {
+      const found = categories.find((c) => c.id === currentCat);
+      titleEl.textContent = `Category ${currentCat}${found ? ' · ' + found.name : ''}`;
+    }
+    if (mode === 'reject') {
+      hintEl.textContent = 'Higher is worse — hover for details';
+    } else if (mode === 'zeroed') {
+      hintEl.textContent = 'Counts rejections as 0 — hover for details';
+    } else {
+      hintEl.textContent = 'Excludes rejections — hover for details';
+    }
+    updateQuestionVisibility();
+    if (animate) {
+      animStart = null;
+      requestAnimationFrame(animateBars);
+    } else {
+      render(1);
+    }
+    refreshCategoryColorsFor(currentGrader);
+    syncRankingSortWithCategory();
+  }
 
       function setActive(btnId) {
         ['mode-score','mode-zeroed','mode-reject'].forEach((id) => {
@@ -875,6 +1067,7 @@ HTML = """
         renderComparison();
       }
 
+      setupRankingTables();
       currentGrader = resolveGrader(currentGrader);
       setActive('mode-zeroed');
       setGrader(currentGrader);
@@ -1016,6 +1209,7 @@ def _build_view(
     bars_exclude: List[Dict[str, Any]] = []
     bars_zeroed: List[Dict[str, Any]] = []
     bars_reject: List[Dict[str, Any]] = []
+    ranking_map: Dict[str, Dict[str, Any]] = {}
 
     for m in models:
         rows = rows_by_model[m]
@@ -1046,6 +1240,16 @@ def _build_view(
             "n_reject": n_reject,
             "n_total": n_total,
         })
+        ranking_map[m] = {
+            "model": m,
+            "provider": provider,
+            "overall_zeroed": avg_zeroed,
+            "overall_answered": avg_answered,
+            "n_answered": n_answered,
+            "n_reject": n_reject,
+            "n_total": n_total,
+            "categories": {},
+        }
 
     bars_exclude.sort(key=lambda x: x["avg"], reverse=True)
     bars_zeroed.sort(key=lambda x: x["avg"], reverse=True)
@@ -1053,6 +1257,7 @@ def _build_view(
 
     cat_list: List[Dict[str, Any]] = []
     cat_bars: Dict[str, Dict[str, Any]] = {}
+    category_presence: Dict[str, bool] = {str(maj): False for maj in categories_by_major.keys()}
     for maj in sorted(categories_by_major.keys()):
         cat_name = categories_by_major.get(maj, f"Chapter {maj}")
         rows_for_cat: List[Dict[str, Any]] = []
@@ -1101,6 +1306,18 @@ def _build_view(
                 "n_reject": rejects_in_cat,
                 "n_total": total,
             })
+            if total > 0:
+                cat_id = str(maj)
+                category_presence[cat_id] = True
+                rank_entry = ranking_map.get(m)
+                if rank_entry is not None:
+                    rank_entry["categories"][cat_id] = {
+                        "avg_zeroed": avg_zeroed,
+                        "avg_answered": avg_answered,
+                        "n_answered": n_answered,
+                        "n_reject": rejects_in_cat,
+                        "n_total": total,
+                    }
         rows_for_cat.sort(key=lambda r: r["avg_zeroed"], reverse=True)
         bars_exclude_cat.sort(key=lambda r: r["avg"], reverse=True)
         bars_zeroed_cat.sort(key=lambda r: r["avg"], reverse=True)
@@ -1116,6 +1333,37 @@ def _build_view(
             "zeroed": bars_zeroed_cat,
             "reject": bars_reject_cat,
         }
+
+    ranking_categories: List[Dict[str, Any]] = []
+    for maj in sorted(categories_by_major.keys()):
+        cat_id = str(maj)
+        if category_presence.get(cat_id):
+            ranking_categories.append({
+                "id": cat_id,
+                "name": categories_by_major.get(maj, f"Chapter {maj}"),
+            })
+
+    ranking_rows: List[Dict[str, Any]] = []
+    for m in models:
+        info = ranking_map.get(m)
+        if not info:
+            continue
+        cat_scores: Dict[str, float] = {}
+        for cat in ranking_categories:
+            entry = info["categories"].get(cat["id"]) if info.get("categories") else None
+            if entry and entry.get("n_total", 0) > 0:
+                cat_scores[cat["id"]] = float(entry.get("avg_zeroed", 0.0) or 0.0)
+        ranking_rows.append({
+            "model": info.get("model", m),
+            "provider": info.get("provider", ""),
+            "overall_zeroed": float(info.get("overall_zeroed", 0.0) or 0.0),
+            "overall_answered": float(info.get("overall_answered", 0.0) or 0.0),
+            "n_answered": int(info.get("n_answered", 0) or 0),
+            "n_reject": int(info.get("n_reject", 0) or 0),
+            "n_total": int(info.get("n_total", 0) or 0),
+            "category_scores": cat_scores,
+        })
+    ranking_rows.sort(key=lambda r: r["overall_zeroed"], reverse=True)
 
     for m in models:
         counter = empty_counter_by_model.get(m, Counter())
@@ -1178,6 +1426,10 @@ def _build_view(
         "total_empty": total_empty,
         "provider_by_model": provider_map,
         "model_order": model_order,
+        "rankings": {
+            "categories": ranking_categories,
+            "rows": ranking_rows,
+        },
     }
 
 def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None, empty_stats_path: Optional[Path] = None):
@@ -1471,6 +1723,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         "empty_stats": agg_metrics["empty_stats"],
         "total_empty": agg_metrics["total_empty"],
         "model_order": agg_metrics["model_order"],
+        "rankings": agg_metrics["rankings"],
     })
 
     for grader in sorted_graders:
@@ -1509,6 +1762,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             "empty_stats": metrics["empty_stats"],
             "total_empty": metrics["total_empty"],
             "model_order": metrics["model_order"],
+            "rankings": metrics["rankings"],
         })
 
     comparison_pairs: List[Dict[str, Any]] = []
