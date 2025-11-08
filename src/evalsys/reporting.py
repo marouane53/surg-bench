@@ -316,6 +316,7 @@ HTML = """
       </div>
     </section>
 
+    {% if not hide_questions %}
     <section class="sect">
       <h2>Per-Question Details</h2>
       {% for view in views %}
@@ -423,6 +424,7 @@ HTML = """
         </div>
       {% endfor %}
     </section>
+    {% endif %}
 
     <script id="report-data" type="application/json">{{ data_json | safe }}</script>
 
@@ -1432,6 +1434,134 @@ def _build_view(
         },
     }
 
+def _generate_markdown_summary(views: List[Dict[str, Any]], models: List[str], total_questions: int, 
+                               category_options: List[Dict[str, Any]], html_path: Path) -> str:
+    """Generate a markdown summary report with the same statistics as the HTML report."""
+    from datetime import datetime
+    
+    lines = ["# Surgical Benchmark Grading Summary", ""]
+    lines.append(f"Source: `{html_path.relative_to(html_path.parent.parent.parent)}`. Generated on {datetime.utcnow().strftime('%Y-%m-%d')} (UTC).")
+    lines.append("")
+    
+    # Benchmark Overview
+    lines.append("## Benchmark Overview")
+    lines.append("")
+    grader_names = [v["label"] for v in views]
+    grader_list = ", ".join(grader_names)
+    
+    # Build category list with start question IDs
+    # Format: "Category Name StartQID, ..."
+    cat_parts = []
+    for cat in category_options:
+        # Find the first question in this category to get the start QID
+        cat_id_num = int(cat['id'])
+        start_qid = f"Q{cat_id_num}.1"  # First question in category
+        cat_parts.append(f"{cat['name']} {cat_id_num}")
+    cat_display = ", ".join(cat_parts)
+    
+    lines.append(f"- Total questions: {total_questions}")
+    lines.append(f"- Models evaluated: {len(models)}")
+    lines.append(f"- Graders included: {len(views)} ({grader_list})")
+    lines.append(f"- Categories: {cat_display}")
+    lines.append("")
+    
+    # For each view (grader), generate statistics
+    for view_idx, view in enumerate(views):
+        grader_label = view["label"]
+        lines.append(f"## Grader: {grader_label}")
+        lines.append("")
+        
+        # Calculate weighted mean scores
+        bars_zeroed = view["bars_zeroed"]
+        bars_exclude = view["bars_exclude"]
+        
+        if bars_zeroed:
+            scores_zeroed = [b["avg"] for b in bars_zeroed]
+            mean_zeroed = sum(scores_zeroed) / len(scores_zeroed) if scores_zeroed else 0.0
+            stdev_zeroed = (sum((x - mean_zeroed) ** 2 for x in scores_zeroed) / len(scores_zeroed)) ** 0.5 if scores_zeroed else 0.0
+        else:
+            mean_zeroed = 0.0
+            stdev_zeroed = 0.0
+            
+        if bars_exclude:
+            scores_answered = [b["avg"] for b in bars_exclude]
+            mean_answered = sum(scores_answered) / len(scores_answered) if scores_answered else 0.0
+            stdev_answered = (sum((x - mean_answered) ** 2 for x in scores_answered) / len(scores_answered)) ** 0.5 if scores_answered else 0.0
+        else:
+            mean_answered = 0.0
+            stdev_answered = 0.0
+        
+        total_empty = view["total_empty"]
+        
+        lines.append(f"- Weighted mean score (zeroed): {mean_zeroed:.3f}")
+        lines.append(f"- Score spread (population stdev): {stdev_zeroed:.3f}")
+        lines.append(f"- Weighted mean score (answered-only): {mean_answered:.3f}")
+        lines.append(f"- Answered-only score spread (pstdev): {stdev_answered:.3f}")
+        lines.append(f"- Empty answers counted: {total_empty}")
+        lines.append("")
+        
+        # Answered-Only Averages
+        lines.append("### Answered-Only Averages (excludes rejections)")
+        lines.append("| Model | Provider | Avg (answered) | Answered | Rejects |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for bar in bars_exclude:
+            lines.append(f"| {bar['model']} | {bar['provider']} | {bar['avg']:.3f} | {bar['n']} | 0 |")
+        lines.append("")
+        
+        # Zeroed Averages
+        lines.append("### Zeroed Averages (with rejects scored as zero)")
+        lines.append("| Model | Provider | Avg (zeroed) | Answered | Rejects | Reject % |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for bar in bars_zeroed:
+            reject_pct = (bar['n_reject'] / bar['n_total'] * 100) if bar.get('n_total', 0) > 0 else 0.0
+            lines.append(f"| {bar['model']} | {bar['provider']} | {bar['avg']:.3f} | {bar['n']} | {bar.get('n_reject', 0)} | {reject_pct:.1f}% |")
+        lines.append("")
+        
+        # Rejection Rates
+        bars_reject = view["bars_reject"]
+        lines.append("### Rejection Rates")
+        lines.append("| Model | Provider | Reject avg score | Answered | Rejects | Reject % |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        for bar in bars_reject:
+            reject_pct = (bar['avg'] * 100) if bar.get('avg') else 0.0
+            lines.append(f"| {bar['model']} | {bar['provider']} | {bar['avg']:.3f} | {bar['n']} | {bar.get('n_reject', 0)} | {reject_pct:.1f}% |")
+        lines.append("")
+        
+        # Category Leaders
+        lines.append("### Category Leaders")
+        lines.append("Best model per category/metric trio (exclude, zeroed, reject).")
+        lines.append("")
+        lines.append("| Category | Metric | Model | Avg | Answered | Rejects |")
+        lines.append("| --- | --- | --- | --- | --- | --- |")
+        
+        # For each category, find the best model for each metric
+        cat_bars = view.get("cat_bars", {})
+        for cat in category_options:
+            cat_id = cat["id"]
+            if cat_id not in cat_bars:
+                continue
+            
+            cat_data = cat_bars[cat_id]
+            
+            # Best exclude (answered-only)
+            if cat_data.get("exclude"):
+                best_exclude = max(cat_data["exclude"], key=lambda x: x["avg"])
+                lines.append(f"| {cat_id} | exclude | {best_exclude['model']} | {best_exclude['avg']:.3f} | {best_exclude['n']} | 0 |")
+            
+            # Best reject (rejection rate - but we want lowest, so this is a bit odd)
+            if cat_data.get("reject"):
+                best_reject = max(cat_data["reject"], key=lambda x: x["avg"])  # Actually gets highest rejection rate
+                lines.append(f"| {cat_id} | reject | {best_reject['model']} | {best_reject['avg']:.3f} | {best_reject['n']} | {best_reject.get('n_reject', 0)} |")
+            
+            # Best zeroed
+            if cat_data.get("zeroed"):
+                best_zeroed = max(cat_data["zeroed"], key=lambda x: x["avg"])
+                lines.append(f"| {cat_id} | zeroed | {best_zeroed['model']} | {best_zeroed['avg']:.3f} | {best_zeroed['n']} | {best_zeroed.get('n_reject', 0)} |")
+        
+        lines.append("")
+    
+    return "\n".join(lines)
+
 def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None, empty_stats_path: Optional[Path] = None):
     base = Path(csv_path)
     if base.is_dir():
@@ -1862,5 +1992,34 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         show_empty_section=show_empty_section,
         comparison_pairs=comparison_pairs,
         has_comparisons=has_comparisons,
+        hide_questions=False,
     )
     html_path.write_text(html, encoding="utf-8")
+    
+    # Generate public version (without question details)
+    public_html_path = html_path.parent / "report_public.html"
+    public_html = tpl.render(
+        total=len(qids),
+        models=models,
+        views=views,
+        data_json=data_json,
+        default_view=default_view,
+        default_view_id=views[0]["id"] if views else "",
+        category_options=category_options,
+        show_empty_section=show_empty_section,
+        comparison_pairs=[],  # Remove question-level comparisons
+        has_comparisons=False,  # Disable comparison section
+        hide_questions=True,  # Hide per-question details
+    )
+    public_html_path.write_text(public_html, encoding="utf-8")
+    
+    # Generate markdown summary report in data/out/reports/
+    # (one level up from graded directory)
+    reports_dir = html_path.parent.parent / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = reports_dir / "grading_stats_summary.md"
+    markdown_summary = _generate_markdown_summary(views, models, len(qids), category_options, html_path)
+    summary_path.write_text(markdown_summary, encoding="utf-8")
+    
+    # Return all three paths for logging
+    return html_path, public_html_path, summary_path

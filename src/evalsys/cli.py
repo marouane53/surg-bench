@@ -485,8 +485,10 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
 
     from .reporting import emit_report
     html_path = Path(out_dir) / "report.html"
-    emit_report(Path(out_dir), html_path, Path(dataset), Path(out_dir))
-    info(f"Wrote {html_path}")
+    html_out, public_out, summary_out = emit_report(Path(out_dir), html_path, Path(dataset), Path(out_dir))
+    info(f"Wrote HTML report (full): {html_out}")
+    info(f"Wrote HTML report (public): {public_out}")
+    info(f"Wrote Markdown summary: {summary_out}")
 
 @app.command()
 def report(scores: str = typer.Option("data/out/graded", help="Path to scores.csv or directory with per-model CSVs"),
@@ -509,8 +511,10 @@ def report(scores: str = typer.Option("data/out/graded", help="Path to scores.cs
         empty_path = base_for_html
     ds_path = Path(dataset)
     info(f"Generating report from {csv_path} (empty path: {empty_path})")
-    emit_report(csv_path, html_path, ds_path, empty_path)
-    info(f"Wrote {html_path}")
+    html_out, public_out, summary_out = emit_report(csv_path, html_path, ds_path, empty_path)
+    info(f"Wrote HTML report (full): {html_out}")
+    info(f"Wrote HTML report (public): {public_out}")
+    info(f"Wrote Markdown summary: {summary_out}")
 
 if __name__ == "__main__":
     app()
