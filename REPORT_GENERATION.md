@@ -4,11 +4,13 @@ This document explains how the HTML and Markdown reports are generated.
 
 ## Overview
 
-The reporting system generates three types of reports from the graded CSV files:
+The reporting system now emits five artifacts from the graded CSV files:
 
-1. **HTML Report (Full)** (`data/out/graded/report.html`) - Complete interactive report with all details
-2. **HTML Report (Public)** (`data/out/graded/report_public.html`) - Public-friendly version without copyrighted questions
-3. **Markdown Summary** (`data/out/reports/grading_stats_summary.md`) - Static text summary
+1. **HTML Report (Full)** (`data/out/graded/report.html`) – Complete interactive report with all details
+2. **HTML Report (Public)** (`data/out/graded/report_public.html`) – Public-friendly version without copyrighted questions
+3. **Markdown Summary** (`data/out/reports/grading_stats_summary.md`) – Static text summary
+4. **Structured Data Bundle** (`data/out/graded/report_data.json`) – Machine-readable dump of every ranking, statistic, and graded record
+5. **Rankings CSV** (`data/out/graded/report_rankings.csv`) – Flat table of model rankings per view/metric for quick spreadsheet work
 
 All reports contain the **same numerical statistics** and are generated from the same underlying data.
 
@@ -67,6 +69,22 @@ The **public HTML report** (`report_public.html`) is designed for sharing and pu
 
 This makes it **~55% smaller** (33MB vs 74MB) and safe to publish without copyright concerns.
 
+## Structured Data Bundle (`report_data.json`)
+
+Every time `emit_report()` runs, it now writes `report_data.json` next to the HTML reports. This JSON file is designed for downstream analysis or sharing with AI assistants when the HTML is too large. It includes:
+
+- **Metadata**: generation timestamp, source paths, model/question counts, and the high-agreement thresholds
+- **Per-view statistics**: model averages, rejection stats, category breakdowns, and empty-answer counts for each grader view (including the "All graders" aggregate)
+- **Flattened graded records**: one entry per `(grader, model, question)` containing the question text, reference answer, model answer, justification, and score (images are intentionally omitted)
+- **High-agreement findings**: questions where at least two graders scored ≥0.8 on the same model answer, along with their justifications
+- **Comparison pairs**: grader disagreement entries without embedded image payloads
+
+Because it is pure JSON (≈5–8 MB for the full benchmark), it is easy to version, diff, or feed to other tooling.
+
+## Rankings CSV (`report_rankings.csv`)
+
+For spreadsheet workflows, every ranking table that appears in the HTML is emitted as a tidy CSV. Each row captures: view ID/label, metric (`zeroed`, `answered_only`, or `reject_rate`), rank, model, provider, average score, answered count, and reject count. Analysts can filter/sort in Excel, Sheets, or pandas without parsing HTML.
+
 ## Generating Reports
 
 ### Using the Standalone Script
@@ -77,13 +95,15 @@ python3 generate_report.py
 This automatically:
 - Finds all `scores__*.csv` files in `data/out/graded/`
 - Includes empty answer data from `empty_answers__*.csv` files
-- Generates all three reports simultaneously
+- Generates all report artifacts (HTML, markdown, JSON, CSV) simultaneously
 - Shows all output paths in the console:
   ```
   Reports generated:
     HTML (full): data/out/graded/report.html
     HTML (public): data/out/graded/report_public.html
     Markdown: data/out/reports/grading_stats_summary.md
+    Data bundle: data/out/graded/report_data.json
+    Rankings CSV: data/out/graded/report_rankings.csv
   ```
 
 ### Using the CLI
@@ -96,7 +116,7 @@ python -m src.evalsys.cli report \
 
 ## Data Consistency
 
-All three reports are generated from the same data pipeline using the `emit_report()` function in `src/evalsys/reporting.py`. This ensures:
+All report artifacts are generated from the same data pipeline using the `emit_report()` function in `src/evalsys/reporting.py`. This ensures:
 
 ✅ All numerical statistics are identical across reports
 ✅ Same calculation methods for averages, percentages, and scores
@@ -106,8 +126,9 @@ All three reports are generated from the same data pipeline using the `emit_repo
 
 ## Report Locations
 
-- **HTML Report (Full)**: `data/out/graded/report.html` (~74MB)
-- **HTML Report (Public)**: `data/out/graded/report_public.html` (~33MB)
-- **Markdown Summary**: `data/out/reports/grading_stats_summary.md` (~15KB)
+- **HTML Report (Full)**: `data/out/graded/report.html` (~74 MB)
+- **HTML Report (Public)**: `data/out/graded/report_public.html` (~33 MB)
+- **Markdown Summary**: `data/out/reports/grading_stats_summary.md` (~15 KB)
+- **Structured Data Bundle**: `data/out/graded/report_data.json` (≈5–8 MB depending on dataset size)
+- **Rankings CSV**: `data/out/graded/report_rankings.csv` (~50 KB)
 - **Source Data**: `data/out/graded/scores__*.csv` and `empty_answers__*.csv`
-

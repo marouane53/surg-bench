@@ -62,6 +62,50 @@ python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
+### GPT-5.1 (Reasoning Mode)
+
+#### High Reasoning Effort
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5.1" --limit 20 --reasoning-effort high
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5.1" --reasoning-effort high
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
+#### Medium Reasoning Effort
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5.1" --limit 20 --reasoning-effort medium
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5.1" --reasoning-effort medium
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ### GPT-5 (Chat Mode)
 **Run 20 questions:**
 ```bash

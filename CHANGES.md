@@ -1,6 +1,31 @@
 # Changes Made to Report Generation System
 
-## Summary
+## Latest Update — Structured Data Export (2025-11-11)
+
+### Summary
+`emit_report()` now produces two additional artifacts by default: a machine-readable bundle (`report_data.json`) that captures every statistic, ranking, and graded record (with high-agreement findings), and a spreadsheet-friendly `report_rankings.csv`. Both the CLI and `generate_report.py` log these new outputs so they can be shared or piped into downstream analysis.
+
+### Changes Made
+
+1. **Structured exports inside `emit_report()`**  
+   *File*: `src/evalsys/reporting.py`
+   - Added helpers to flatten graded records, compute ≥0.8 high-agreement findings (requiring two graders), sanitize comparison entries, and write rankings as CSV.
+   - `emit_report()` now writes `report_data.json` and `report_rankings.csv` next to the HTML reports and returns the new paths.
+
+2. **CLI + script output**  
+   *Files*: `src/evalsys/cli.py`, `generate_report.py`
+   - Both entry points log the locations of the JSON bundle and rankings CSV so users immediately know where to find them when running `python -m src.evalsys.cli report` or `python3 generate_report.py`.
+
+3. **Documentation refresh**  
+   *Files*: `README.md`, `REPORT_GENERATION.md`
+   - Documented the new artifacts, their contents, and typical sizes.
+   - Noted that the JSON bundle omits images but retains question text, answers, justifications, and grader-level findings to make it suitable for AI assistants or spreadsheets.
+
+### Verification
+- Ran the reporting CLI locally to ensure all five artifacts (full HTML, public HTML, markdown, JSON bundle, rankings CSV) were created without regression.
+- Manually inspected `report_data.json` to confirm that per-question records and high-agreement entries were serialized without images and that thresholds default to ≥0.8 with ≥2 graders.
+
+## Previous Summary (Markdown parity)
 
 Modified the reporting system to automatically generate a markdown summary (`grading_stats_summary.md`) alongside the HTML report, ensuring both contain the same numerical statistics.
 
@@ -80,4 +105,3 @@ Both reports now:
 - Contain identical numerical statistics
 - Update simultaneously when data changes
 - Provide different views of the same information (interactive HTML vs static Markdown)
-

@@ -28,11 +28,18 @@ def main():
     print(f"Output: {output_html}")
     
     # Generate the reports
-    html_path, public_html_path, summary_path = emit_report(scores_dir, output_html, dataset_path, empty_answers_dir)
+    html_path, public_html_path, summary_path, data_bundle_path, rankings_csv_path = emit_report(
+        scores_dir,
+        output_html,
+        dataset_path,
+        empty_answers_dir,
+    )
     print(f"\nReports generated:")
     print(f"  HTML (full): {html_path}")
     print(f"  HTML (public): {public_html_path}")
     print(f"  Markdown: {summary_path}")
+    print(f"  Data bundle: {data_bundle_path}")
+    print(f"  Rankings CSV: {rankings_csv_path}")
 
 if __name__ == "__main__":
     main()

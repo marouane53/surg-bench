@@ -6,6 +6,10 @@ from jinja2 import Template
 import json, ast, os, re, copy, math
 from collections import defaultdict, Counter
 from itertools import combinations
+from datetime import datetime
+
+DEFAULT_AGREEMENT_THRESHOLD = 0.8
+DEFAULT_AGREEMENT_MIN_GRADERS = 2
 
 HTML = """
 <!doctype html>
@@ -1434,10 +1438,9 @@ def _build_view(
         },
     }
 
-def _generate_markdown_summary(views: List[Dict[str, Any]], models: List[str], total_questions: int, 
+def _generate_markdown_summary(views: List[Dict[str, Any]], models: List[str], total_questions: int,
                                category_options: List[Dict[str, Any]], html_path: Path) -> str:
     """Generate a markdown summary report with the same statistics as the HTML report."""
-    from datetime import datetime
     
     lines = ["# Surgical Benchmark Grading Summary", ""]
     lines.append(f"Source: `{html_path.relative_to(html_path.parent.parent.parent)}`. Generated on {datetime.utcnow().strftime('%Y-%m-%d')} (UTC).")
@@ -1561,6 +1564,209 @@ def _generate_markdown_summary(views: List[Dict[str, Any]], models: List[str], t
         lines.append("")
     
     return "\n".join(lines)
+
+
+def _strip_images(record: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(record, dict):
+        return record
+    cleaned = copy.deepcopy(record)
+    cleaned.pop("images", None)
+    return cleaned
+
+
+def _flatten_records(rows_by_grader_model: Dict[str, Dict[str, List[Dict[str, Any]]]]) -> List[Dict[str, Any]]:
+    flat: List[Dict[str, Any]] = []
+    for grader, model_map in rows_by_grader_model.items():
+        for model, records in model_map.items():
+            for rec in records:
+                qid = rec.get("qid")
+                if not qid:
+                    continue
+                missed = rec.get("missed", [])
+                if not isinstance(missed, list):
+                    missed = [str(missed)] if missed else []
+                flat.append({
+                    "grader": grader or "",
+                    "provider": rec.get("provider", ""),
+                    "model": model,
+                    "qid": qid,
+                    "category_id": rec.get("category_id", ""),
+                    "category_name": rec.get("category_name", ""),
+                    "score": float(rec.get("score", 0.0) or 0.0),
+                    "justification": rec.get("justification", ""),
+                    "answer": rec.get("answer", ""),
+                    "question_text": rec.get("question_text", ""),
+                    "reference_answer": rec.get("answer_text", ""),
+                    "missed": missed,
+                    "harmful": bool(rec.get("harmful", False)),
+                    "rejected": bool(rec.get("rejected", False)),
+                    "rejection_count": int(rec.get("rejection_count", 0) or 0),
+                    "page_start": int(rec.get("page_start", 0) or 0),
+                    "page_end": int(rec.get("page_end", 0) or 0),
+                    "model_slug": rec.get("model_slug", ""),
+                })
+    flat.sort(key=lambda row: (_qid_key(row["qid"])[0], _qid_key(row["qid"])[1], row["model"], row["grader"]))
+    return flat
+
+
+def _high_agreement_entries(flat_records: List[Dict[str, Any]], threshold: float, min_graders: int) -> List[Dict[str, Any]]:
+    keyed: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for rec in flat_records:
+        if rec.get("rejected"):
+            continue
+        keyed[(rec.get("model", ""), rec.get("qid", ""))].append(rec)
+
+    results: List[Dict[str, Any]] = []
+    for (model, qid), records in keyed.items():
+        passing = [r for r in records if r.get("score", 0.0) >= threshold]
+        graders = {r.get("grader", "") for r in passing if r.get("grader")}
+        if len(graders) < min_graders:
+            continue
+        template = records[0]
+        avg_score = sum(r.get("score", 0.0) for r in passing) / len(passing) if passing else 0.0
+        entry = {
+            "model": model,
+            "qid": qid,
+            "category_id": template.get("category_id", ""),
+            "category_name": template.get("category_name", ""),
+            "question_text": template.get("question_text", ""),
+            "model_answer": template.get("answer", ""),
+            "reference_answer": template.get("reference_answer", ""),
+            "avg_score": round(avg_score, 6),
+            "min_score": min((r.get("score", 0.0) for r in passing), default=0.0),
+            "max_score": max((r.get("score", 0.0) for r in passing), default=0.0),
+            "grader_count": len(graders),
+            "scores": [
+                {
+                    "grader": r.get("grader", ""),
+                    "score": r.get("score", 0.0),
+                    "justification": r.get("justification", ""),
+                    "missed": r.get("missed", []),
+                }
+                for r in sorted(passing, key=lambda item: item.get("grader", ""))
+            ],
+        }
+        results.append(entry)
+
+    results.sort(key=lambda e: (-e["avg_score"], e["model"], _qid_key(e["qid"])))
+    return results
+
+
+def _sanitize_comparison_pairs(comparison_pairs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    cleaned = copy.deepcopy(comparison_pairs)
+    for pair in cleaned:
+        for entry in pair.get("entries", []):
+            for side in ("first", "second"):
+                record = entry.get(side, {}).get("record")
+                if isinstance(record, dict):
+                    record.pop("images", None)
+    return cleaned
+
+
+def _write_rankings_csv(path: Path, views: List[Dict[str, Any]]) -> None:
+    rows: List[Dict[str, Any]] = []
+    metric_map = {
+        "bars_zeroed": "zeroed",
+        "bars_exclude": "answered_only",
+        "bars_reject": "reject_rate",
+    }
+    for view in views:
+        for key, metric_name in metric_map.items():
+            bars = view.get(key, [])
+            for rank, bar in enumerate(bars, start=1):
+                rows.append({
+                    "view_id": view.get("id", ""),
+                    "view_label": view.get("label", ""),
+                    "metric": metric_name,
+                    "rank": rank,
+                    "model": bar.get("model", ""),
+                    "provider": bar.get("provider", ""),
+                    "value": float(bar.get("avg", 0.0) or 0.0),
+                    "answered_count": int(bar.get("n", 0) or 0),
+                    "reject_count": int(bar.get("n_reject", 0) or 0),
+                    "total_count": int(bar.get("n_total", bar.get("n", 0) or 0) or 0),
+                })
+    df = pd.DataFrame(rows)
+    df.to_csv(path, index=False)
+
+
+def _export_structured_bundle(
+    export_dir: Path,
+    scores_source: Path,
+    dataset_path: Optional[Path],
+    html_path: Path,
+    public_html_path: Path,
+    summary_path: Path,
+    models: List[str],
+    qids: List[str],
+    views: List[Dict[str, Any]],
+    category_options: List[Dict[str, Any]],
+    comparison_pairs: List[Dict[str, Any]],
+    rows_by_grader_model: Dict[str, Dict[str, List[Dict[str, Any]]]],
+) -> Tuple[Path, Path]:
+    export_dir.mkdir(parents=True, exist_ok=True)
+    data_bundle_path = export_dir / "report_data.json"
+    rankings_csv_path = export_dir / "report_rankings.csv"
+
+    flat_records = _flatten_records(rows_by_grader_model)
+    agreement = _high_agreement_entries(
+        flat_records,
+        DEFAULT_AGREEMENT_THRESHOLD,
+        DEFAULT_AGREEMENT_MIN_GRADERS,
+    )
+
+    metadata = {
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "scores_source": str(Path(scores_source).resolve()),
+        "dataset_source": str(Path(dataset_path).resolve()) if dataset_path else None,
+        "html_report": str(html_path.resolve()),
+        "public_html_report": str(public_html_path.resolve()),
+        "markdown_summary": str(summary_path.resolve()),
+        "model_count": len(models),
+        "models": models,
+        "total_questions": len(qids),
+        "grader_count": len(views),
+        "agreement_settings": {
+            "threshold": DEFAULT_AGREEMENT_THRESHOLD,
+            "min_graders": DEFAULT_AGREEMENT_MIN_GRADERS,
+            "record_count": len(agreement),
+        },
+    }
+
+    view_exports: List[Dict[str, Any]] = []
+    for view in views:
+        view_exports.append({
+            "id": view.get("id", ""),
+            "label": view.get("label", ""),
+            "is_all": view.get("is_all", False),
+            "grader_key": view.get("grader_key"),
+            "total_empty": view.get("total_empty", 0),
+            "model_order": view.get("model_order", []),
+            "model_avgs": view.get("model_avgs", {}),
+            "provider_by_model": view.get("provider_by_model", {}),
+            "bars_zeroed": view.get("bars_zeroed", []),
+            "bars_exclude": view.get("bars_exclude", []),
+            "bars_reject": view.get("bars_reject", []),
+            "categories": view.get("categories", []),
+            "cat_bars": view.get("cat_bars", {}),
+            "empty_stats": view.get("empty_stats", {}),
+            "rankings": view.get("rankings", {}),
+            "source_graders": view.get("source_graders"),
+        })
+
+    payload = {
+        "data_version": 1,
+        "meta": metadata,
+        "category_options": category_options,
+        "views": view_exports,
+        "comparison_pairs": _sanitize_comparison_pairs(comparison_pairs),
+        "graded_records": flat_records,
+        "high_agreement_records": agreement,
+    }
+
+    data_bundle_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_rankings_csv(rankings_csv_path, views)
+    return data_bundle_path, rankings_csv_path
 
 def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = None, empty_stats_path: Optional[Path] = None):
     base = Path(csv_path)
@@ -2020,6 +2226,21 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
     summary_path = reports_dir / "grading_stats_summary.md"
     markdown_summary = _generate_markdown_summary(views, models, len(qids), category_options, html_path)
     summary_path.write_text(markdown_summary, encoding="utf-8")
+
+    data_bundle_path, rankings_csv_path = _export_structured_bundle(
+        html_path.parent,
+        base,
+        dataset_path,
+        html_path,
+        public_html_path,
+        summary_path,
+        models,
+        qids,
+        views,
+        category_options,
+        comparison_pairs,
+        rows_by_grader_model,
+    )
     
-    # Return all three paths for logging
-    return html_path, public_html_path, summary_path
+    # Return all artifact paths for logging
+    return html_path, public_html_path, summary_path, data_bundle_path, rankings_csv_path

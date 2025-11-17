@@ -19,7 +19,7 @@ We selected this textbook because it was **published in 2025**, before most curr
 - **PDF Extraction**: Converts surgical PDFs into structured Q&A datasets with associated images
 - **Multi-Provider Support**: OpenAI, Gemini, Anthropic, Groq, xAI, OpenRouter (Mistral & Cohere optional)
 - **Switchable Graders**: GPT-5 Mini or Gemini 2.5 Flash for consistent evaluation
-- **Comprehensive Reporting**: CSV output and HTML reports with scoring analytics
+- **Comprehensive Reporting**: CSV output, HTML dashboards, JSON data bundles, and ranking-ready CSVs
 - **Resume Support**: Stop and continue runs or grading without losing progress
 
 ## Requirements
@@ -106,10 +106,13 @@ python -m src.evalsys.cli grade --grader
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini,gemini:gemini-2.5-flash"
 ```
-This creates per-model CSVs in `data/out/graded/` and a unified report:
+This creates per-model CSVs in `data/out/graded/` plus a full suite of reports:
 - `scores__<model>__<grader>.csv` for graded answers per model/grader pair
 - `empty_answers__<model>__<grader>.csv` for empty answers per model/grader pair (if any)
-- `report.html` combining all per-model results
+- `report.html` (full interactive report) and `report_public.html` (question-free public version)
+- `report_data.json` containing all tables, per-question graded records, and high-agreement findings (no images)
+- `report_rankings.csv` with flattened rankings per view/metric for spreadsheets
+- `data/out/reports/grading_stats_summary.md` – markdown snapshot of the metrics
 
 > **Progress tracking:** grading files update after each question. If grading is interrupted, rerun with `--resume` (default) and the CLI will skip QIDs already written to the CSVs.
 
@@ -143,7 +146,7 @@ python generate_report.py
 This script:
 - Automatically finds all `scores__*.csv` files in `data/out/graded/`
 - Includes empty answer data from `empty_answers__*.csv` files
-- Generates `data/out/graded/report.html` with comprehensive analytics
+- Generates `report.html`, `report_public.html`, `report_data.json`, `report_rankings.csv`, and `grading_stats_summary.md`
 - Works with any Python version (bypasses package installation requirements)
 
 The generated report includes:
@@ -152,6 +155,8 @@ The generated report includes:
 - **Question Analysis**: Per-question breakdowns with justifications
 - **Empty Answer Tracking**: Models that failed to respond
 - **Interactive Charts**: Sortable tables and visual analytics
+
+Need to share the results with collaborators or an AI assistant? Use the automatically generated `data/out/graded/report_data.json` (all tables and graded records without images) and `data/out/graded/report_rankings.csv` (flattened rankings for spreadsheets).
 
 ### Report Options
 - `--scores`: Path to CSV file or directory containing `scores__*.csv` files
