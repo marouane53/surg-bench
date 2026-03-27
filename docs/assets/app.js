@@ -51,6 +51,18 @@
     footerStamp: document.getElementById("footer-stamp"),
     heroSummary: document.getElementById("hero-summary"),
     methodBenchmarkCopy: document.getElementById("method-benchmark-copy"),
+    showcaseTitle: document.getElementById("showcase-title"),
+    showcaseDeck: document.getElementById("showcase-deck"),
+    showcaseMeta: document.getElementById("showcase-meta"),
+    showcaseQuestionLead: document.getElementById("showcase-question-lead"),
+    showcaseQuestionList: document.getElementById("showcase-question-list"),
+    showcaseImageToggle: document.getElementById("showcase-image-toggle"),
+    showcaseImagePanel: document.getElementById("showcase-image-panel"),
+    showcaseImageRail: document.getElementById("showcase-image-rail"),
+    showcaseReferenceList: document.getElementById("showcase-reference-list"),
+    showcaseRubricList: document.getElementById("showcase-rubric-list"),
+    showcaseSummary: document.getElementById("showcase-summary"),
+    showcaseModelGrid: document.getElementById("showcase-model-grid"),
     viewControls: document.getElementById("view-controls"),
     metricControls: document.getElementById("metric-controls"),
     resultsContext: document.getElementById("results-context"),
@@ -107,6 +119,14 @@
 
   function formatCount(value) {
     return new Intl.NumberFormat("en-US").format(Number(value));
+  }
+
+  function truncateText(value, maxLength) {
+    const compact = String(value || "").replace(/\s+/g, " ").trim();
+    if (compact.length <= maxLength) {
+      return compact;
+    }
+    return `${compact.slice(0, maxLength - 1).trimEnd()}…`;
   }
 
   function escapeHtml(value) {
@@ -221,7 +241,7 @@
     refs.metaCategories.textContent = DATA.meta.categoryCount;
     refs.metaGenerated.textContent = formatDate(DATA.meta.generatedAt);
     refs.footerStamp.textContent = `Generated from graded benchmark outputs on ${formatDate(DATA.meta.generatedAt)}.`;
-    refs.heroSummary.textContent = `Surg Bench evaluates ${formatCount(DATA.meta.modelCount)} AI models on ${formatCount(DATA.meta.caseCount)} cases drawn from the 2025 textbook Surgical Exam Cases by Charles Tan. Some cases include images and many contain multiple numbered tasks, adding up to ${formatCount(DATA.meta.subPromptCount)} sub-prompts. This page introduces the benchmark and shows the public results across answer quality, refusal behavior, response time, and specialty coverage.`;
+    refs.heroSummary.textContent = `Surg Bench evaluates ${formatCount(DATA.meta.modelCount)} AI models on ${formatCount(DATA.meta.caseCount)} cases drawn from the 2025 textbook Surgical Exam Cases by Charles Tan. Some cases include images and many contain multiple numbered tasks, adding up to ${formatCount(DATA.meta.subPromptCount)} sub-prompts. This page introduces the benchmark, shows the public results, and includes one illustrative case so visitors can see how the evaluation works on a real prompt.`;
     refs.methodBenchmarkCopy.innerHTML = `
       <p>
         Surg Bench evaluates AI models on ${formatCount(DATA.meta.caseCount)} cases from the 2025 textbook
@@ -239,9 +259,166 @@
       <p>
         Because the cases are open-ended rather than multiple-choice, grading is not based on exact answer matching.
         Instead, two independent model graders score each response against the reference answer and the expected
-        clinical reasoning.
+        clinical reasoning. One representative case is shown on this page so readers can see that scoring process in context.
       </p>
     `;
+  }
+
+  function renderShowcase() {
+    const example = DATA.showcaseExample;
+    if (!example) {
+      return;
+    }
+
+    refs.showcaseTitle.textContent = example.title;
+    refs.showcaseDeck.textContent = example.deck;
+    refs.showcaseMeta.innerHTML = `
+      <span>${escapeHtml(example.qid)}</span>
+      <span>${escapeHtml(example.category)}</span>
+      <span>${escapeHtml(example.pageRange)}</span>
+      <span>${escapeHtml(example.grader.label)} grading</span>
+    `;
+    refs.showcaseQuestionLead.textContent = example.questionLead;
+
+    refs.showcaseQuestionList.innerHTML = example.questionItems
+      .map(
+        (item, index) => `
+          <div class="showcase-list__item">
+            <span class="showcase-list__index">${index + 1}</span>
+            <p>${escapeHtml(item)}</p>
+          </div>
+        `
+      )
+      .join("");
+
+    refs.showcaseImageRail.innerHTML = example.images
+      .map((image, index) => {
+        const wideClass = index === example.images.length - 1 ? " showcase-image-card--wide" : "";
+        return `
+          <figure class="showcase-image-card${wideClass}">
+            <img src="${escapeAttribute(image.src)}" alt="${escapeAttribute(image.alt)}">
+            <figcaption>${escapeHtml(image.caption)}</figcaption>
+          </figure>
+        `;
+      })
+      .join("");
+    refs.showcaseImagePanel.hidden = true;
+    refs.showcaseImageToggle.setAttribute("aria-expanded", "false");
+    refs.showcaseImageToggle.textContent = "Show images from this case";
+
+    refs.showcaseReferenceList.innerHTML = example.referenceItems
+      .map(
+        (item, index) => `
+          <div class="showcase-list__item">
+            <span class="showcase-list__index">${index + 1}</span>
+            <p>${escapeHtml(item)}</p>
+          </div>
+        `
+      )
+      .join("");
+
+    refs.showcaseRubricList.innerHTML = example.rubric
+      .map(
+        (item, index) => `
+          <div class="showcase-rubric">
+            <span class="showcase-list__index">${index + 1}</span>
+            <div class="showcase-rubric__body">
+              <p class="showcase-rubric__title">${escapeHtml(item.label)}</p>
+              <p>${escapeHtml(item.description)}</p>
+            </div>
+          </div>
+        `
+      )
+      .join("");
+
+    refs.showcaseSummary.textContent = example.summary;
+    refs.showcaseModelGrid.innerHTML = example.models
+      .map((model) => {
+        const scoreClass = model.empty ? " showcase-score--empty" : "";
+        const preview = model.empty
+          ? `No answer returned after ${model.retryAttempts || 0} retries.`
+          : truncateText(model.answerPreview || model.answer, 210);
+        const grades = model.graderScores
+          .map((item) => {
+            const suffix = item.empty ? "empty" : formatScore(item.score);
+            return `<span class="showcase-grade">${escapeHtml(item.label)} ${escapeHtml(suffix)}</span>`;
+          })
+          .join("");
+        const checks = model.checks
+          .map(
+            (item) =>
+              `<span class="showcase-check" data-status="${escapeAttribute(item.status)}">${escapeHtml(item.label)}</span>`
+          )
+          .join("");
+        const missed = model.missedPoints.length
+          ? `
+            <div>
+              <p class="showcase-body-heading">What the graders marked missing</p>
+              <ul class="showcase-missed">
+                ${model.missedPoints
+                  .slice(0, 8)
+                  .map((item) => `<li>${escapeHtml(item)}</li>`)
+                  .join("")}
+              </ul>
+            </div>
+          `
+          : `
+            <p class="showcase-empty-note">No missed points were flagged by the graders.</p>
+          `;
+        const answerBody = model.empty
+          ? `<p class="showcase-empty-note">The benchmark run recorded no answer for this case.</p>`
+          : `
+            <div>
+              <p class="showcase-body-heading">Model answer</p>
+              <pre class="showcase-answer">${escapeHtml(model.answer)}</pre>
+            </div>
+          `;
+
+        return `
+          <details class="showcase-model">
+            <summary>
+              <div class="showcase-model__top">
+                <div>
+                  <span class="showcase-model__name"><span class="provider-dot" style="background:${scoreColor(model.provider)}"></span>${escapeHtml(model.label)}</span>
+                </div>
+                <span class="showcase-score${scoreClass}">${model.empty ? "No answer" : formatScore(model.averageScore)}</span>
+              </div>
+              <p class="showcase-headline" data-tone="${escapeAttribute(model.headlineTone)}">${escapeHtml(model.headline)}</p>
+              <div class="showcase-checks">${checks}</div>
+              <p class="showcase-preview">${escapeHtml(preview)}</p>
+            </summary>
+            <div class="showcase-model__body">
+              <div>
+                <p class="showcase-body-heading">Reviewer grade</p>
+                <div class="showcase-grades">${grades}</div>
+              </div>
+              <div>
+                <p class="showcase-body-heading">Reviewer summary</p>
+                <p class="showcase-review-note">${escapeHtml(model.reviewExcerpt || model.headline)}</p>
+              </div>
+              ${answerBody}
+              ${missed}
+            </div>
+          </details>
+        `;
+      })
+      .join("");
+  }
+
+  function setupShowcaseImageToggle() {
+    if (!refs.showcaseImageToggle || !refs.showcaseImagePanel) {
+      return;
+    }
+
+    refs.showcaseImageToggle.addEventListener("click", () => {
+      const isExpanded = refs.showcaseImageToggle.getAttribute("aria-expanded") === "true";
+      const nextExpanded = !isExpanded;
+      refs.showcaseImageToggle.setAttribute("aria-expanded", String(nextExpanded));
+      refs.showcaseImageToggle.textContent = nextExpanded
+        ? "Hide images from this case"
+        : "Show images from this case";
+      refs.showcaseImagePanel.hidden = !nextExpanded;
+    });
   }
 
   function renderControls() {
@@ -706,7 +883,7 @@
           }
         });
       },
-      { threshold: 0.15 }
+      { threshold: 0.05 }
     );
 
     document.querySelectorAll(".reveal").forEach((node) => observer.observe(node));
@@ -714,6 +891,8 @@
 
   function init() {
     renderMeta();
+    renderShowcase();
+    setupShowcaseImageToggle();
     render();
     setupReveal();
 

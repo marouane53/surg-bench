@@ -34,6 +34,7 @@
           <a href="#overview">Overview</a>
           <a href="#results">Results</a>
           <a href="#categories">Categories</a>
+          <a href="#example">Example</a>
           <a href="#method">Method</a>
         </nav>
         <a
@@ -93,8 +94,8 @@
               come from memorized training data.
             </p>
             <p>
-              This page is an introduction to the project and its results, with aggregate charts instead of source
-              cases, answers, and images.
+              This page introduces the benchmark, shows the overall results, and includes one representative case so
+              visitors can see what the task and grading look like in practice.
             </p>
           </div>
 
@@ -112,7 +113,7 @@
         </div>
         <div>
           <p class="micro-label">How to use this page</p>
-          <p>Start with the benchmark board, then use the scatter plots and heatmap to see where performance is reliable, fast, and broad.</p>
+          <p>Start with the benchmark board, use the specialty views to see where performance is broad or narrow, then open the example case for one question-level walkthrough.</p>
         </div>
       </section>
 
@@ -243,6 +244,76 @@
         </article>
       </section>
 
+      <section class="showcase" id="example">
+        <div class="showcase-head">
+          <div>
+            <p class="micro-label">Example case</p>
+            <h2 id="showcase-title">Representative case</h2>
+            <p class="showcase-deck" id="showcase-deck">
+              Loading showcase example...
+            </p>
+          </div>
+          <div class="showcase-meta" id="showcase-meta"></div>
+        </div>
+
+        <div class="showcase-grid">
+          <article class="showcase-panel showcase-panel--prompt">
+            <p class="micro-label">Prompt</p>
+            <p class="showcase-lead" id="showcase-question-lead"></p>
+            <div class="showcase-list" id="showcase-question-list"></div>
+          </article>
+
+          <aside class="showcase-media-shell">
+            <p class="micro-label">Case images</p>
+            <h3>Clinical photo, ultrasound, and specimen</h3>
+            <p class="showcase-media-copy">Open the images only when you want to inspect the source material for this example.</p>
+            <button
+              class="showcase-media-button"
+              id="showcase-image-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="showcase-image-panel"
+            >
+              Show images from this case
+            </button>
+            <div class="showcase-media-panel" id="showcase-image-panel" hidden>
+              <div class="showcase-media" id="showcase-image-rail" aria-label="Example case images"></div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="showcase-detail-grid">
+          <article class="showcase-panel">
+            <div class="module-head">
+              <div>
+                <p class="micro-label">Reference answer</p>
+                <h3>What the case expected</h3>
+              </div>
+            </div>
+            <div class="showcase-list showcase-list--reference" id="showcase-reference-list"></div>
+          </article>
+
+          <article class="showcase-panel">
+            <div class="module-head">
+              <div>
+                <p class="micro-label">Scoring lens</p>
+                <h3>What the graders looked for</h3>
+              </div>
+            </div>
+            <div class="showcase-rubric-list" id="showcase-rubric-list"></div>
+          </article>
+        </div>
+
+        <div class="showcase-models-head">
+          <div>
+            <p class="micro-label">Model answers</p>
+            <h3>How each model handled this case</h3>
+          </div>
+        </div>
+        <p class="showcase-summary" id="showcase-summary"></p>
+        <div class="showcase-model-grid" id="showcase-model-grid"></div>
+      </section>
+
       <section class="results-header reveal" id="method">
         <div>
           <p class="section-index">03</p>
@@ -281,14 +352,14 @@
           <div class="module-head">
             <div>
               <p class="micro-label">Source material policy</p>
-              <h3>What this page does not reproduce</h3>
+              <h3>What stays out of the public release</h3>
             </div>
           </div>
           <ul class="plain-list">
-            <li>Case text from the source book</li>
-            <li>Reference answers and grader justifications</li>
-            <li>Model responses or associated image material</li>
-            <li>Anything that would allow the underlying cases to be reconstructed</li>
+            <li>The full set of 290 source cases from the textbook</li>
+            <li>The full answer and image corpus needed to reconstruct the book</li>
+            <li>Question-by-question grader notes across the entire benchmark</li>
+            <li>Only one illustrative case is reproduced above; the rest of the benchmark is summarized at aggregate level</li>
           </ul>
         </article>
 

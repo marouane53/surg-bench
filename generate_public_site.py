@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import csv
+import html
 import json
 import math
 import re
+import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -38,6 +42,50 @@ PROVIDER_LABELS = {
 }
 
 NUMBERED_PROMPT_RE = re.compile(r"(?m)^\s*\d+\.")
+
+SHOWCASE_EXAMPLE = {
+    "qid": "Q1.2",
+    "title": "Example case: posterior neck lump",
+    "deck": (
+        "This is the kind of open-ended, image-based case Surg Bench uses. Models had to "
+        "describe the lesion, interpret the ultrasound, identify the diagnosis, and explain "
+        "how the lesion behaves over time."
+    ),
+    "imageCaptions": ["Clinical photo", "Ultrasound", "Excised specimen"],
+    "rubric": [
+        {
+            "id": "appearance",
+            "label": "Clinical appearance",
+            "description": (
+                "Describe a well-circumscribed posterior-neck lump and note the lack of "
+                "inflammatory skin changes."
+            ),
+        },
+        {
+            "id": "ultrasound",
+            "label": "Ultrasound findings",
+            "description": (
+                "Recognize that ultrasound was used and describe a cystic lesion with "
+                "internal echogenic material and a hypoechoic rim."
+            ),
+        },
+        {
+            "id": "diagnosis",
+            "label": "Diagnosis",
+            "description": "Identify the lesion as an epidermal or epidermoid cyst.",
+        },
+        {
+            "id": "natural_history",
+            "label": "Natural history",
+            "description": (
+                "Explain that the cyst may stay the same, enlarge, or shrink, and that it can "
+                "become infected and form an abscess."
+            ),
+        },
+    ],
+}
+
+SHOWCASE_GRADER = "gemini-2.5-flash"
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,6 +144,31 @@ def round_value(value: float | int) -> float | int:
 
 def count_numbered_prompts(text: str) -> int:
     return len(NUMBERED_PROMPT_RE.findall(text or ""))
+
+
+def compact_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def split_numbered_sections(text: str) -> tuple[str, list[str]]:
+    compact = compact_text(text)
+    if not compact:
+        return "", []
+
+    matches = list(re.finditer(r"(\d+\.)\s*", compact))
+    if not matches:
+        return compact, []
+
+    lead = compact[: matches[0].start()].strip()
+    items = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(compact)
+        item = compact[start:end].strip()
+        if item:
+            items.append(item)
+
+    return lead, items
 
 
 def compute_dataset_counts(dataset_path: Path) -> dict[str, Any]:
@@ -226,6 +299,464 @@ def select_best(
             model_label(item["model"]),
         ),
     )
+
+
+def parse_missed_points(raw_value: str) -> list[str]:
+    if not raw_value:
+        return []
+
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            parsed = parser(raw_value)
+            break
+        except (json.JSONDecodeError, SyntaxError, ValueError):
+            parsed = None
+    else:
+        parsed = None
+
+    if parsed is None:
+        return [compact_text(raw_value)] if compact_text(raw_value) else []
+
+    if isinstance(parsed, list):
+        return [compact_text(str(item)) for item in parsed if compact_text(str(item))]
+
+    return [compact_text(str(parsed))] if compact_text(str(parsed)) else []
+
+
+def extract_showcase_report_meta(report_html_path: Path, qid: str) -> dict[str, Any]:
+    report_html = report_html_path.read_text(encoding="utf-8")
+    summary_match = re.search(
+        rf"<summary>\s*<span class=\"qid\">{re.escape(qid)}</span>\s*"
+        r"<span class=\"cat\">([^<]+)</span>\s*<span class=\"muted\">([^<]+)</span>",
+        report_html,
+        re.S,
+    )
+    gallery_match = re.search(
+        rf"<span class=\"qid\">{re.escape(qid)}</span>.*?<div class=\"gallery\".*?"
+        r"<div class=\"thumbs\">(.*?)</div>",
+        report_html,
+        re.S,
+    )
+
+    image_names: list[str] = []
+    if gallery_match:
+        image_names = re.findall(r'data-src="\.\./images/([^"]+)"', gallery_match.group(1))
+
+    return {
+        "category": clean_category_name(html.unescape(summary_match.group(1))) if summary_match else "",
+        "pageRange": html.unescape(summary_match.group(2)) if summary_match else "",
+        "imageNames": image_names,
+    }
+
+
+def copy_showcase_images(
+    image_names: list[str],
+    source_images_dir: Path,
+    docs_assets_dir: Path,
+    qid: str,
+    captions: list[str],
+) -> list[dict[str, Any]]:
+    showcase_dir = docs_assets_dir / "showcase"
+    showcase_dir.mkdir(parents=True, exist_ok=True)
+
+    copied_images = []
+    for index, image_name in enumerate(image_names, start=1):
+        source_path = source_images_dir / image_name
+        if not source_path.exists():
+            continue
+
+        destination_name = f"{slugify(qid)}-{index}{source_path.suffix.lower()}"
+        destination_path = showcase_dir / destination_name
+        shutil.copy2(source_path, destination_path)
+
+        copied_images.append(
+            {
+                "src": f"./assets/showcase/{destination_name}",
+                "alt": f"{qid} image {index}",
+                "caption": captions[index - 1] if index - 1 < len(captions) else f"Image {index}",
+            }
+        )
+
+    return copied_images
+
+
+def has_any(text: str, needles: list[str]) -> bool:
+    return any(needle in text for needle in needles)
+
+
+def identify_showcase_diagnosis(answer: str) -> tuple[str, str]:
+    lowered = answer.lower()
+    normalized = f" {re.sub(r'[^a-z0-9]+', ' ', lowered)} "
+
+    if "madelung" in lowered or "lipomatosis" in lowered:
+        return "Madelung disease", "wrong"
+    if "cystic hygroma" in lowered or "lymphangioma" in lowered:
+        return "cystic hygroma", "wrong"
+    if "thyroglossal" in lowered:
+        return "thyroglossal duct cyst", "wrong"
+    if "branchial cyst" in lowered:
+        return "branchial cyst", "wrong"
+    if " lipoma " in normalized:
+        return "lipoma", "wrong"
+    if " pilar " in normalized or " trichilemmal " in normalized:
+        return "pilar cyst", "correct_specific"
+    if (
+        re.search(r"\bepiderm(?:al|oid)\b", normalized)
+        or " sebaceous " in normalized
+        or " skin cyst " in normalized
+    ) and " lipoma " not in normalized and " madelung " not in normalized:
+        return "epidermal cyst", "correct"
+    if " cutaneous cyst " in normalized or " cyst " in normalized:
+        return "benign cyst", "generic"
+    return "", "unknown"
+
+
+def showcase_headline(
+    *,
+    answer: str,
+    score: float,
+    justification: str,
+    missed_points: list[str],
+    is_empty: bool,
+) -> tuple[str, str]:
+    if is_empty or not compact_text(answer):
+        return "No answer returned", "empty"
+
+    lowered_justification = justification.lower()
+    diagnosis_label, diagnosis_kind = identify_showcase_diagnosis(answer)
+
+    if "more precise diagnosis of 'pilar cyst'" in lowered_justification or diagnosis_kind == "correct_specific":
+        return "Reviewer accepted the more specific pilar-cyst diagnosis", "strong"
+    if diagnosis_kind == "wrong" and diagnosis_label:
+        article = "an" if diagnosis_label[0].lower() in "aeiou" else "a"
+        return f"Reviewer judged this as {article} {diagnosis_label} misdiagnosis", "missed"
+    if score >= 0.98:
+        return "Reviewer judged this as exceptionally strong", "strong"
+    if score >= 0.9 and diagnosis_kind in {"correct", "correct_specific"}:
+        return "Reviewer judged this as highly accurate, with only minor misses", "strong"
+    if score >= 0.9 and diagnosis_kind == "generic":
+        return "Reviewer judged this as highly accurate despite slightly imprecise cyst wording", "strong"
+    if score >= 0.75 and diagnosis_kind in {"correct", "correct_specific", "generic"}:
+        return "Reviewer judged this as mostly correct, but missing some case detail", "mixed"
+    if score >= 0.5 and diagnosis_kind in {"correct", "correct_specific", "generic"}:
+        return "Reviewer judged the diagnosis right, but the answer was thinner than the strongest ones", "mixed"
+    if diagnosis_kind == "generic":
+        return "Reviewer judged this as an imprecise cyst answer", "mixed"
+    if "misdiagnosis" in lowered_justification or "fundamentally misinterpreted" in lowered_justification:
+        return "Reviewer flagged a major diagnostic miss", "missed"
+
+    return "Reviewer judged this as a weak match to the case", "missed"
+
+
+def showcase_review_excerpt(
+    justification: str,
+    is_empty: bool,
+    score: float,
+    diagnosis_label: str,
+    diagnosis_kind: str,
+) -> str:
+    if is_empty:
+        return "The benchmark run recorded no answer for this case after retries."
+
+    compact = compact_text(justification)
+    if not compact:
+        return ""
+
+    sentences = re.split(r"(?<=[.!?])\s+", compact)
+    if diagnosis_kind == "wrong":
+        diagnosis_tokens = [token for token in diagnosis_label.lower().split() if token]
+        critical_markers = (
+            "misdiagn",
+            "fundamental error",
+            "fundamentally misinterpreted",
+            "incorrect diagnosis",
+            "completely different diagnosis",
+            "core issue",
+            "significant misdiagnosis",
+            "incorrect premise",
+        )
+        for sentence in sentences:
+            lowered_sentence = sentence.lower()
+            if diagnosis_tokens and all(token in lowered_sentence for token in diagnosis_tokens):
+                return sentence
+            if any(marker in lowered_sentence for marker in critical_markers):
+                return sentence
+
+    if score < 0.75:
+        limitation_markers = (
+            "however",
+            "lacked",
+            "lack of detail",
+            "omits",
+            "could have",
+            "noted in the reference",
+            "thin",
+            "less specific",
+        )
+        for sentence in sentences:
+            lowered_sentence = sentence.lower()
+            if any(marker in lowered_sentence for marker in limitation_markers):
+                return sentence
+
+    return sentences[0]
+
+
+def showcase_checks(
+    *,
+    answer: str,
+    score: float,
+    missed_points: list[str],
+    is_empty: bool,
+) -> list[dict[str, str]]:
+    statuses = []
+    if is_empty or not compact_text(answer):
+        return [
+            {"id": item["id"], "label": item["label"], "status": "empty"}
+            for item in SHOWCASE_EXAMPLE["rubric"]
+        ]
+
+    lowered_missed = [point.lower() for point in missed_points]
+    diagnosis_label, diagnosis_kind = identify_showcase_diagnosis(answer)
+
+    rubric_keywords = {
+        "appearance": ["q1", "erythema", "skin changes", "circular", "well-circumscribed", "neck"],
+        "ultrasound": ["ultrasound", "usg", "hypoechoic", "hyperechoic", "cystic", "echo", "rim", "focus"],
+        "diagnosis": ["diagnosis", "epiderm", "pilar", "trichilemmal", "lipoma", "madelung", "hygroma", "thyroglossal", "branchial"],
+        "natural_history": ["natural history", "infect", "abscess", "decrease", "increase", "remain", "rupture", "enlarge"],
+    }
+
+    raw_statuses: dict[str, str] = {}
+    for rubric_id, keywords in rubric_keywords.items():
+        matched = any(any(keyword in point for keyword in keywords) for point in lowered_missed)
+        if rubric_id == "diagnosis":
+            if diagnosis_kind in {"correct", "correct_specific"} and not matched:
+                raw_statuses[rubric_id] = "strong"
+            elif diagnosis_kind in {"correct", "correct_specific", "generic"}:
+                raw_statuses[rubric_id] = "mixed"
+            elif diagnosis_label:
+                raw_statuses[rubric_id] = "missed"
+            else:
+                raw_statuses[rubric_id] = "mixed" if matched and score >= 0.5 else "missed"
+            continue
+
+        if not matched:
+            raw_statuses[rubric_id] = "strong"
+        elif score >= 0.75:
+            raw_statuses[rubric_id] = "mixed"
+        else:
+            raw_statuses[rubric_id] = "missed"
+
+    for item in SHOWCASE_EXAMPLE["rubric"]:
+        statuses.append(
+            {
+                "id": item["id"],
+                "label": item["label"],
+                "status": raw_statuses[item["id"]],
+            }
+        )
+
+    return statuses
+
+
+def build_showcase_models(
+    graded_dir: Path,
+    report_models: list[str],
+    qid: str,
+    grader: str,
+) -> list[dict[str, Any]]:
+    records_by_model: dict[str, dict[str, Any]] = {
+        model: {
+            "model": model,
+            "provider": "",
+            "answer": "",
+            "graderScores": [],
+            "justification": "",
+            "missedPoints": [],
+            "retryAttempts": 0,
+            "empty": False,
+        }
+        for model in report_models
+    }
+
+    for score_path in sorted(graded_dir.glob("scores__*__*.csv")):
+        with score_path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                if row.get("qid") != qid or row.get("grader") != grader:
+                    continue
+
+                entry = records_by_model[row["model"]]
+                entry["provider"] = row["provider"]
+                entry["empty"] = False
+                if not entry["answer"]:
+                    entry["answer"] = row["answer"].strip()
+                if not entry["justification"]:
+                    entry["justification"] = compact_text(row.get("justification", ""))
+                entry["graderScores"].append(
+                    {
+                        "grader": row["grader"],
+                        "label": model_label(row["grader"]),
+                        "score": round_value(float(row["score"])),
+                    }
+                )
+                entry["missedPoints"].extend(parse_missed_points(row.get("missed", "")))
+
+    for empty_path in sorted(graded_dir.glob("empty_answers__*__*.csv")):
+        with empty_path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                if row.get("qid") != qid or row.get("grader") != grader:
+                    continue
+
+                entry = records_by_model[row["model"]]
+                entry["provider"] = row["provider"]
+                entry["empty"] = True
+                entry["retryAttempts"] = max(entry["retryAttempts"], int(row.get("retry_attempts") or 0))
+                entry["graderScores"].append(
+                    {
+                        "grader": row["grader"],
+                        "label": model_label(row["grader"]),
+                        "score": 0,
+                        "empty": True,
+                    }
+                )
+
+    models = []
+    for model in report_models:
+        entry = records_by_model[model]
+        unique_missed = sorted(set(entry["missedPoints"]), key=str.lower)
+        answer_text = entry["answer"]
+        justification = entry["justification"]
+        average_score = round_value(float(entry["graderScores"][0]["score"])) if entry["graderScores"] else 0
+        diagnosis_label, diagnosis_kind = identify_showcase_diagnosis(answer_text)
+        headline, tone = showcase_headline(
+            answer=answer_text,
+            score=float(average_score),
+            justification=justification,
+            missed_points=unique_missed,
+            is_empty=entry["empty"],
+        )
+
+        models.append(
+            {
+                "id": slugify(model),
+                "model": model,
+                "label": model_label(model),
+                "provider": entry["provider"],
+                "providerLabel": provider_label(entry["provider"]) if entry["provider"] else "",
+                "averageScore": average_score,
+                "empty": entry["empty"],
+                "retryAttempts": entry["retryAttempts"],
+                "headline": headline,
+                "headlineTone": tone,
+                "diagnosisLabel": diagnosis_label,
+                "diagnosisKind": diagnosis_kind,
+                "reviewExcerpt": showcase_review_excerpt(
+                    justification,
+                    entry["empty"],
+                    float(average_score),
+                    diagnosis_label,
+                    diagnosis_kind,
+                ),
+                "answer": answer_text,
+                "answerPreview": compact_text(answer_text)[:260],
+                "graderScores": sorted(entry["graderScores"], key=lambda item: item["label"]),
+                "missedPoints": unique_missed,
+                "checks": showcase_checks(
+                    answer=answer_text,
+                    score=float(average_score),
+                    missed_points=unique_missed,
+                    is_empty=entry["empty"],
+                ),
+            }
+        )
+
+    models.sort(key=lambda item: (item["empty"], -float(item["averageScore"]), item["label"]))
+    return models
+
+
+def build_showcase_summary(models: list[dict[str, Any]]) -> str:
+    empty_count = sum(1 for model in models if model["empty"])
+    wrong_calls = []
+    for model in models:
+        if model["empty"] or model["headlineTone"] != "missed" or not model.get("diagnosisLabel"):
+            continue
+        label = str(model["diagnosisLabel"]).lower()
+        wrong_calls.append(label)
+
+    pieces = [
+        "On this example, the reviewer marked the strongest answers as correctly connecting the clinical photo, ultrasound, and specimen to an epidermal cyst."
+    ]
+    if empty_count:
+        pieces.append(f"{empty_count} models returned no answer.")
+    if wrong_calls:
+        ranked_wrong_calls = [call for call, _ in Counter(wrong_calls).most_common(3)]
+        if len(ranked_wrong_calls) == 1:
+            diagnosis_phrase = ranked_wrong_calls[0]
+        elif len(ranked_wrong_calls) == 2:
+            diagnosis_phrase = " or ".join(ranked_wrong_calls)
+        else:
+            diagnosis_phrase = ", ".join(ranked_wrong_calls[:-1]) + f", or {ranked_wrong_calls[-1]}"
+        pieces.append(
+            "The weakest non-empty answers instead called it "
+            + diagnosis_phrase
+            + "."
+        )
+
+    return " ".join(pieces)
+
+
+def build_showcase_payload(
+    dataset_path: Path,
+    report_html_path: Path,
+    graded_dir: Path,
+    docs_assets_dir: Path,
+    report_models: list[str],
+) -> dict[str, Any]:
+    qid = SHOWCASE_EXAMPLE["qid"]
+    dataset_row = None
+    with dataset_path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("qid") == qid:
+                dataset_row = row
+                break
+
+    if dataset_row is None:
+        raise ValueError(f"Could not find showcase case {qid} in {dataset_path}")
+
+    report_meta = extract_showcase_report_meta(report_html_path, qid)
+    question_lead, question_items = split_numbered_sections(dataset_row.get("question_text", ""))
+    _, reference_items = split_numbered_sections(dataset_row.get("answer_text", ""))
+    images = copy_showcase_images(
+        report_meta["imageNames"],
+        report_html_path.parent.parent / "images",
+        docs_assets_dir,
+        qid,
+        SHOWCASE_EXAMPLE["imageCaptions"],
+    )
+    models = build_showcase_models(graded_dir, report_models, qid, SHOWCASE_GRADER)
+
+    return {
+        "qid": qid,
+        "title": SHOWCASE_EXAMPLE["title"],
+        "deck": SHOWCASE_EXAMPLE["deck"],
+        "category": report_meta["category"],
+        "pageRange": report_meta["pageRange"],
+        "questionLead": question_lead,
+        "questionItems": question_items,
+        "referenceItems": reference_items,
+        "rubric": SHOWCASE_EXAMPLE["rubric"],
+        "images": images,
+        "grader": {
+            "id": SHOWCASE_GRADER,
+            "label": model_label(SHOWCASE_GRADER),
+        },
+        "summary": build_showcase_summary(models),
+        "models": models,
+    }
 
 
 def build_view_payload(
@@ -392,6 +923,13 @@ def main() -> None:
     reference_view = next((view for view in report_views if not view.get("is_all")), report_views[0])
     category_meta = build_category_meta(reference_view)
     latency_stats = load_latency_stats(runs_dir)
+    showcase_payload = build_showcase_payload(
+        dataset_path=dataset_path,
+        report_html_path=Path(report_data["meta"]["html_report"]),
+        graded_dir=report_data_path.parent,
+        docs_assets_dir=out_path.parent,
+        report_models=report_data["meta"]["models"],
+    )
 
     payload = {
         "meta": {
@@ -417,10 +955,12 @@ def main() -> None:
             "sourceBook": "Surgical Exam Cases",
             "countingMethod": "Cases are benchmark entries. Sub-prompts are counted from numbered prompts in each case, using the reference answer structure when OCR truncates a case prompt.",
             "publicSafe": True,
-            "questionTextIncluded": False,
-            "answerTextIncluded": False,
-            "imageContentIncluded": False,
+            "showcaseCaseIncluded": True,
+            "fullQuestionCorpusIncluded": False,
+            "fullAnswerCorpusIncluded": False,
+            "fullImageCorpusIncluded": False,
         },
+        "showcaseExample": showcase_payload,
         "views": [build_view_payload(view, latency_stats) for view in report_views],
     }
 
