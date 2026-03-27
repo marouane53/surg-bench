@@ -109,7 +109,7 @@ python -m src.evalsys.cli grade --grader "openai:gpt-5-mini,gemini:gemini-2.5-fl
 This creates per-model CSVs in `data/out/graded/` plus a full suite of reports:
 - `scores__<model>__<grader>.csv` for graded answers per model/grader pair
 - `empty_answers__<model>__<grader>.csv` for empty answers per model/grader pair (if any)
-- `report.html` (full interactive report) and `report_public.html` (question-free public version)
+- `report.html` (full interactive report), `report_compact.html` (shareable, question text + scores only), and `report_public.html` (question-free public version)
 - `report_data.json` containing all tables, per-question graded records, and high-agreement findings (no images)
 - `report_rankings.csv` with flattened rankings per view/metric for spreadsheets
 - `data/out/reports/grading_stats_summary.md` – markdown snapshot of the metrics
@@ -146,7 +146,7 @@ python generate_report.py
 This script:
 - Automatically finds all `scores__*.csv` files in `data/out/graded/`
 - Includes empty answer data from `empty_answers__*.csv` files
-- Generates `report.html`, `report_public.html`, `report_data.json`, `report_rankings.csv`, and `grading_stats_summary.md`
+- Generates `report.html`, `report_compact.html`, `report_public.html`, `report_data.json`, `report_rankings.csv`, and `grading_stats_summary.md`
 - Works with any Python version (bypasses package installation requirements)
 
 The generated report includes:
@@ -156,7 +156,7 @@ The generated report includes:
 - **Empty Answer Tracking**: Models that failed to respond
 - **Interactive Charts**: Sortable tables and visual analytics
 
-Need to share the results with collaborators or an AI assistant? Use the automatically generated `data/out/graded/report_data.json` (all tables and graded records without images) and `data/out/graded/report_rankings.csv` (flattened rankings for spreadsheets).
+Need to share the results with collaborators or an AI assistant? Use the automatically generated `data/out/graded/report_compact.html` or `data/out/graded/report_public.html` for lightweight HTML sharing, plus `data/out/graded/report_data.json` (all tables and graded records without images) and `data/out/graded/report_rankings.csv` (flattened rankings for spreadsheets).
 
 ### Report Options
 - `--scores`: Path to CSV file or directory containing `scores__*.csv` files
@@ -169,7 +169,7 @@ Need to share the results with collaborators or an AI assistant? Use the automat
 You can pause and resume both model runs and grading without losing progress. The CLI skips QIDs already completed and appends only new results, then refreshes the report.
 
 - `run --resume`: Skips QIDs already present in `data/out/runs/<provider>__<model>.jsonl` and appends new answers.
-- `grade --resume`: Skips QIDs already graded in `data/out/graded/scores__<model>__<grader>.csv` or recorded as empty in `empty_answers__<model>__<grader>.csv`, appends new rows, and regenerates `report.html`.
+- `grade --resume`: Skips QIDs already graded in `data/out/graded/scores__<model>__<grader>.csv` or recorded as empty in `empty_answers__<model>__<grader>.csv`, appends new rows, and regenerates `report.html`, `report_compact.html`, and `report_public.html`.
 
 Examples:
 
@@ -186,7 +186,7 @@ python -m src.evalsys.cli grade --runs-dir data/out/runs --grader "openai:gpt-5-
 
 Notes:
 - `--resume` is enabled by default for both `run` and `grade`.
-- `grade` always regenerates `data/out/graded/report.html` so your report stays current after each incremental run.
+- `grade` always regenerates `data/out/graded/report.html`, `data/out/graded/report_compact.html`, and `data/out/graded/report_public.html` so your report stays current after each incremental run.
 
 ## Quick Testing Example
 
@@ -423,7 +423,9 @@ python -m tests.test_prompt_packing
 - `data/out/runs/*.jsonl` - Raw model responses
 - `data/out/graded/scores__<model>__<grader>.csv` - Graded results per model/grader pair
 - `data/out/graded/empty_answers__<model>__<grader>.csv` - Empty answers per model/grader pair (if any)
-- `data/out/graded/report.html` - Unified HTML report
+- `data/out/graded/report.html` - Full HTML report (includes question details)
+- `data/out/graded/report_compact.html` - Compact HTML report (question text + scores)
+- `data/out/graded/report_public.html` - Public HTML report (no question text)
 
 ## Architecture
 

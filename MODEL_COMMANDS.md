@@ -106,6 +106,29 @@ python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ```
 
+### GPT-5.2 (Reasoning Mode)
+
+#### Medium Reasoning Effort
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5.2" --limit 20 --reasoning-effort medium
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "openai-reasoning:gpt-5.2" --reasoning-effort medium
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
 ### GPT-5 (Chat Mode)
 **Run 20 questions:**
 ```bash
@@ -193,6 +216,48 @@ python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 ---
 
 ## Google Gemini Models
+
+### Gemini 3 Flash (Preview)
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "gemini:gemini-3-flash-preview" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "gemini:gemini-3-flash-preview"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
+
+### Gemini 3 Pro (Preview)
+**Run 20 questions:**
+```bash
+python -m src.evalsys.cli run --models "gemini:gemini-3-pro-preview" --limit 20
+```
+
+**Run full set (290 questions):**
+```bash
+python -m src.evalsys.cli run --models "gemini:gemini-3-pro-preview"
+```
+
+**Grade the results:**
+```bash
+python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash"
+```
+
+**Grade with GPT-5 Mini:**
+```bash
+python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
+```
 
 ### Gemini 2.5 Flash Lite
 **Run 20 questions:**
@@ -577,7 +642,17 @@ python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --limit 20 --rea
 # Example with medium reasoning effort  
 python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --limit 20 --reasoning-effort medium
 ```
-Available options: `minimal`, `low`, `medium`, `high`
+Available options: `minimal`, `low`, `medium`, `high` (alias: `none` → `minimal`)
+
+### Gemini Thinking (Gemini 2.5 / 3)
+Gemini 3 uses thinking levels (`--gemini-thinking-level`), while Gemini 2.5 uses thinking budgets (`--gemini-thinking-budget`):
+```bash
+# Gemini 3: constrain thinking for faster responses
+python -m src.evalsys.cli run --models "gemini:gemini-3-flash-preview" --limit 20 --gemini-thinking-level low
+
+# Gemini 2.5: disable thinking (budget=0) or set a budget >= 1024 to enable
+python -m src.evalsys.cli run --models "gemini:gemini-2.5-flash" --limit 20 --gemini-thinking-budget 0
+```
 
 ### Anthropic Thinking Mode
 Enable extended thinking with a token budget (recommended: 16000 tokens):
@@ -637,5 +712,5 @@ The `--label` parameter is useful when comparing different configurations of the
 - The `--limit` parameter is **only needed when testing with a subset of questions** (e.g., `--limit 20`). When running the full dataset (290 questions), omit the `--limit` parameter entirely
 - Output files are saved to `data/out/runs/` by default
 - Graded results are saved to `data/out/graded/` by default
-- Reports are generated automatically after grading in `data/out/graded/report.html`
+- Reports are generated automatically after grading in `data/out/graded/report.html`, `data/out/graded/report_compact.html`, and `data/out/graded/report_public.html`
 - Make sure to set appropriate API keys in your `.env` file before running

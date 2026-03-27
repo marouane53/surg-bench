@@ -8,7 +8,7 @@ This note captures the exact workflow we followed for the most recent full bench
 1. **Ingested the textbook PDF** using `python -m src.evalsys.cli ingest --pdf data/surgical.pdf`, which rebuilt `data/out/dataset.jsonl` and refreshed the cropped images in `data/out/images/`.
 2. **Ran the full 290-question set** for each model via `python -m src.evalsys.cli run --models "<provider>:<model>"`. We kept the default resume behavior so re-runs would skip completed question IDs and logged timings to `data/out/runs/run_history.log` automatically.
 3. **Graded every run twice**—first with `gemini:gemini-2.5-flash`, then with `openai:gpt-5-mini`—using `python -m src.evalsys.cli grade --grader "gemini:gemini-2.5-flash,openai:gpt-5-mini"`. This produced paired `scores__*.csv` and `empty_answers__*.csv` files inside `data/out/graded/`.
-4. **Regenerated the interactive HTML report** with `python -m src.evalsys.cli report --scores data/out/graded --dataset data/out/dataset.jsonl --out-html data/out/graded/report.html`, which is what backs both `report.html` (internal) and `report_public.html` (shareable) today.
+4. **Regenerated the interactive HTML report** with `python -m src.evalsys.cli report --scores data/out/graded --dataset data/out/dataset.jsonl --out-html data/out/graded/report.html`, which outputs `report.html` (full), `report_compact.html` (shareable with question text), and `report_public.html` (shareable without questions).
 
 ## Models we tested on 2025-11-01 (full 290-Q set)
 | Provider | Model | Output file (`data/out/runs/…`) | Elapsed (hh:mm:ss) | Notes |
@@ -32,6 +32,6 @@ _All timings and ordering mirror `data/out/runs/run_history.log` and assume the 
 - Raw model answers: `data/out/runs/<provider>__<model>.jsonl`
 - Graded CSVs: `data/out/graded/scores__<model>__<grader>.csv`
 - Empty answer tracking: `data/out/graded/empty_answers__<model>__<grader>.csv`
-- HTML report (interactive): `data/out/graded/report.html`
+- HTML report (interactive): `data/out/graded/report.html` (see also `report_compact.html` + `report_public.html`)
 
 Add future runs to this table (include timestamp, any special flags, and grading status) so we can trace regressions quickly.

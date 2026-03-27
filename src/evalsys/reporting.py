@@ -19,132 +19,358 @@ HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Surgical Benchmark</title>
   <style>
-    /* Light theme defaults */
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
     :root {
-      --bg: #f7f8fc;
+      --bg: #f8fbfd;
+      --bg-2: #f2f6f9;
       --panel: #ffffff;
-      --panel-2: #f4f6ff;
-      --text: #1b2340;
-      --muted: #5a6280;
-      --accent: #315efb;
-      --grid: #e9ecf4;
-      --ok: #1e9e63;
-      --warn: #c78a00;
-      --bad: #cc3b3b;
-      --chip: #eef2ff;
-      --chip-text: #2d3a86;
+      --panel-2: #f6f9fb;
+      --text: #1a2a33;
+      --muted: #5f707b;
+      --accent: #0a5bd3;
+      --accent-2: #16a3b6;
+      --grid: #dfe6eb;
+      --ok: #1b8f62;
+      --warn: #c28a1d;
+      --bad: #c84545;
+      --chip: #e7f0ff;
+      --chip-text: #13408c;
+      --shadow: 0 10px 24px rgba(15, 30, 45, 0.08);
+      --ring: 0 0 0 2px rgba(10, 91, 211, 0.2);
     }
     [data-theme='dark'] {
-      --bg: #0f1220;
-      --panel: #171a2b;
-      --panel-2: #1e2236;
-      --text: #e7e9f5;
-      --muted: #9aa2c0;
-      --accent: #6ea8fe;
-      --grid: #2a3050;
-      --ok: #33d17a;
+      --bg: #0d1116;
+      --bg-2: #0f1a21;
+      --panel: #131c24;
+      --panel-2: #16222c;
+      --text: #e6eef5;
+      --muted: #9fb0bd;
+      --accent: #4ea4ff;
+      --accent-2: #33c4d8;
+      --grid: #243241;
+      --ok: #37d39b;
       --warn: #ffcc66;
-      --bad: #ff7b7b;
-      --chip: #263054;
-      --chip-text: #c8d2ff;
+      --bad: #ff8b7b;
+      --chip: #1a2530;
+      --chip-text: #b7d5ff;
+      --shadow: 0 16px 30px rgba(0, 0, 0, 0.35);
+      --ring: 0 0 0 2px rgba(78, 164, 255, 0.35);
     }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 24px; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji"; color: var(--text); background: var(--bg); }
-    .container { max-width: 1200px; margin: 0 auto; }
-    header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
-    header h1 { font-size: 22px; font-weight: 700; margin: 0; letter-spacing: 0.3px; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      padding: 28px 22px 40px;
+      font-family: 'IBM Plex Sans', 'Segoe UI', Tahoma, sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, var(--bg), var(--bg-2));
+      line-height: 1.5;
+      position: relative;
+      min-height: 100vh;
+    }
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: linear-gradient(rgba(10, 18, 24, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(10, 18, 24, 0.03) 1px, transparent 1px);
+      background-size: 140px 140px;
+      opacity: 0.4;
+      pointer-events: none;
+      z-index: -1;
+    }
+    .container { max-width: 1240px; margin: 0 auto; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 14px 18px;
+      border-radius: 12px;
+      background: var(--panel);
+      border: 1px solid var(--grid);
+      box-shadow: var(--shadow);
+    }
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
     header .meta { color: var(--muted); font-size: 13px; }
-    header .actions { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+    header .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-    .card { background: linear-gradient(180deg, var(--panel), var(--panel-2)); border: 1px solid #232845; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); overflow: hidden; }
-    .card .hd { padding: 14px 16px; border-bottom: 1px solid #262b49; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--grid);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      animation: rise 0.5s ease both;
+    }
+    .card .hd {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--grid);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: var(--panel-2);
+    }
     .card .bd { padding: 16px; }
 
-    .card.note { border-style: dashed; background: var(--panel-2); }
+    .card.note { border-style: dashed; background: rgba(10, 91, 211, 0.04); }
 
-    .controls { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
-    .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid #cfd6ff33; background: var(--chip); color: var(--chip-text); cursor: pointer; font-size: 12px; }
-    .btn:hover { filter: brightness(1.03); }
-    .btn.active { outline: 2px solid var(--accent); }
-    select, option { font-size: 12px; padding: 6px 10px; border-radius: 8px; background: var(--panel-2); color: var(--text); border:1px solid #2b3156; }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .btn {
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(10, 91, 211, 0.25);
+      background: var(--chip);
+      color: var(--chip-text);
+      cursor: pointer;
+      font-size: 12px;
+      letter-spacing: 0.02em;
+      transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 16px rgba(10, 91, 211, 0.12); }
+    .btn.active { box-shadow: var(--ring); border-color: var(--accent); }
+    select, option {
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--grid);
+    }
 
-    #chartWrap { position: relative; }
-    #scoreCanvas { width: 100%; height: 360px; display:block; }
-    .tooltip { position: absolute; pointer-events:none; background:#0d1022; color:#dce1ff; border:1px solid #2b3156; padding:8px 10px; border-radius:8px; font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,0.15); display:none; z-index: 10; }
+    #chartWrap {
+      position: relative;
+      background: var(--panel-2);
+      border-radius: 10px;
+      padding: 12px;
+      border: 1px solid var(--grid);
+    }
+    #scoreCanvas { width: 100%; height: 360px; display: block; }
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--grid);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+      display: none;
+      z-index: 10;
+    }
 
-    .sect { margin-top: 22px; }
-    .sect h2 { font-size: 16px; margin: 0 0 10px 0; font-weight: 600; color: #dce1ff; }
+    .sect { margin-top: 24px; }
+    .sect h2 { font-size: 16px; margin: 0 0 12px 0; font-weight: 600; color: var(--text); }
 
-    details.mcard { border: 1px solid #262b49; border-radius: 12px; margin: 12px 0; background: #151a30; }
-    details.mcard > summary { list-style:none; cursor:pointer; padding: 12px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
-    details.mcard > summary::-webkit-details-marker { display:none; }
-    .hdr-left { display:flex; gap:8px; align-items:center; }
-    .model-name { font-weight: 700; }
+    details.mcard {
+      border: 1px solid var(--grid);
+      border-radius: 12px;
+      margin: 12px 0;
+      background: var(--panel);
+    }
+    details.mcard > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    details.mcard > summary::-webkit-details-marker { display: none; }
+    details.mcard > summary::after {
+      content: '';
+      width: 8px;
+      height: 8px;
+      border: 2px solid var(--muted);
+      border-left: 0;
+      border-top: 0;
+      transform: rotate(-45deg);
+      transition: transform 0.2s ease;
+    }
+    details.mcard[open] > summary::after { transform: rotate(45deg); }
+    .hdr-left { display: flex; gap: 8px; align-items: center; }
+    .model-name { font-weight: 600; }
     .muted { color: var(--muted); }
-    .avg-badge { padding: 4px 8px; border-radius: 999px; background:#1a2145; border: 1px solid #2e3867; font-size: 12px; color:#c8d2ff; }
+    .avg-badge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(10, 91, 211, 0.12);
+      border: 1px solid rgba(10, 91, 211, 0.2);
+      font-size: 12px;
+      color: var(--accent);
+    }
 
-    details.qd { background: #151a30; border: 1px solid #262b49; border-radius: 10px; margin: 10px 0; }
-    details.qd summary { list-style: none; cursor: pointer; padding: 12px 14px; display:flex; align-items:center; gap:10px; }
-    details.qd summary::-webkit-details-marker { display:none; }
-    .qid { font: 600 13px/1 ui-sans-serif,system-ui; color:#b9c2ff; padding: 3px 8px; background:#202652; border-radius: 8px; border:1px solid #2e3867; }
-    .cat { font: 600 11px/1 ui-sans-serif,system-ui; color:#a7f3d0; padding: 3px 6px; background:#0f2e26; border-radius: 8px; border:1px solid #1d4b41; }
-    .scorechip { padding:2px 8px; border-radius: 999px; border:1px solid #2e375f; background:#22284a; color:#d8ddff; font-size:12px; }
-    .score-ok { background:#173626; border-color:#245c3e; color:#98f2c9; }
-    .score-warn { background:#3a341a; border-color:#6a5e2a; color:#ffe9a6; }
-    .score-bad { background:#3a1a1a; border-color:#6a2a2a; color:#ffb0b0; }
+    details.qd {
+      background: var(--panel-2);
+      border: 1px solid var(--grid);
+      border-radius: 10px;
+      margin: 10px 0;
+    }
+    details.qd summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    details.qd summary::-webkit-details-marker { display: none; }
+    details.qd summary::after {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border: 2px solid var(--muted);
+      border-left: 0;
+      border-top: 0;
+      transform: rotate(-45deg);
+      margin-left: auto;
+      transition: transform 0.2s ease;
+    }
+    details.qd[open] summary::after { transform: rotate(45deg); }
+    .qid {
+      font: 600 12px/1 'IBM Plex Sans', sans-serif;
+      color: var(--accent);
+      padding: 4px 8px;
+      background: rgba(10, 91, 211, 0.08);
+      border-radius: 999px;
+      border: 1px solid rgba(10, 91, 211, 0.2);
+    }
+    .cat {
+      font: 600 11px/1 'IBM Plex Sans', sans-serif;
+      color: #1f6f8b;
+      padding: 4px 8px;
+      background: rgba(22, 163, 182, 0.14);
+      border-radius: 999px;
+      border: 1px solid rgba(22, 163, 182, 0.3);
+    }
+    .scorechip {
+      padding: 2px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--grid);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+    }
+    .score-ok { background: rgba(27, 143, 98, 0.16); border-color: rgba(27, 143, 98, 0.35); color: var(--ok); }
+    .score-warn { background: rgba(194, 138, 29, 0.16); border-color: rgba(194, 138, 29, 0.35); color: var(--warn); }
+    .score-bad { background: rgba(200, 69, 69, 0.16); border-color: rgba(200, 69, 69, 0.35); color: var(--bad); }
 
-    .kv { display:grid; grid-template-columns: 140px 1fr; gap: 10px; padding: 10px 14px; border-top:1px solid #202545; }
-    .kv .k { color:#9aa2c0; font-size:12px; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space: pre-wrap; }
-    .answer, .question, .just { padding: 10px 14px; border-top:1px solid #202545; }
-    .gallery { padding: 10px 14px; border-top:1px solid #202545; display:none; }
-    .gallery .thumbs { display:flex; flex-wrap:wrap; gap:10px; }
-    .gallery img { width: 180px; max-height: 200px; object-fit: contain; background:#0d1022; border:1px solid #2b3156; border-radius:8px; padding:6px; }
-    .toggle { margin-left:auto; }
+    .kv { display: grid; grid-template-columns: 140px 1fr; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--grid); }
+    .kv .k { color: var(--muted); font-size: 12px; }
+    .mono { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; }
+    .answer, .question, .just { padding: 10px 14px; border-top: 1px solid var(--grid); }
+    .gallery { padding: 10px 14px; border-top: 1px solid var(--grid); display: none; }
+    .gallery .thumbs { display: flex; flex-wrap: wrap; gap: 10px; }
+    .gallery img { width: 180px; max-height: 200px; object-fit: contain; background: var(--panel); border: 1px solid var(--grid); border-radius: 8px; padding: 6px; }
+    .toggle { margin-left: auto; }
 
     a, button { color: inherit; }
 
     table.cat { width: 100%; border-collapse: collapse; }
-    table.cat th, table.cat td { border-bottom: 1px solid #262b49; padding: 8px 10px; text-align: left; font-size: 12px; }
-    table.cat tbody tr { border-left: 4px solid transparent; transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, filter 0.2s ease; }
-    table.cat tbody tr td { transition: color 0.25s ease; }
-    table.cat tbody tr:hover { filter: brightness(1.05); }
-    .table-wrap { width: 100%; overflow-x: auto; }
+    table.cat th, table.cat td { border-bottom: 1px solid var(--grid); padding: 8px 10px; text-align: left; font-size: 12px; }
+    table.cat thead th { color: var(--muted); font-weight: 600; }
+    table.cat tbody tr { border-left: 4px solid transparent; transition: background 0.2s ease, border-color 0.2s ease; }
+    table.cat tbody tr:hover { background: rgba(10, 91, 211, 0.04); }
+    .table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--grid); border-radius: 10px; background: var(--panel); }
     table.rankings { width: 100%; border-collapse: collapse; min-width: 540px; }
-    table.rankings thead th { padding: 8px 10px; font-size: 12px; text-align: left; color: var(--muted); border-bottom: 1px solid #262b49; position: relative; cursor: pointer; }
+    table.rankings thead th {
+      padding: 10px 12px;
+      font-size: 12px;
+      text-align: left;
+      color: var(--muted);
+      border-bottom: 1px solid var(--grid);
+      position: relative;
+      cursor: pointer;
+      background: var(--panel-2);
+    }
     table.rankings thead th.sort-disabled { cursor: default; }
     table.rankings thead th.active { color: var(--text); }
-    table.rankings thead th::after { content: ''; position: absolute; right: 8px; top: 50%; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid transparent; border-bottom: 6px solid transparent; transform: translateY(-50%); opacity: 0.2; transition: opacity 0.2s ease, transform 0.2s ease; }
-    table.rankings thead th[data-sort-dir="desc"]::after { border-top: 6px solid var(--muted); border-bottom: none; opacity: 0.6; transform: translateY(-60%); }
-    table.rankings thead th[data-sort-dir="asc"]::after { border-bottom: 6px solid var(--muted); border-top: none; opacity: 0.6; transform: translateY(-40%); }
-    table.rankings tbody td { padding: 8px 10px; font-size: 12px; border-bottom: 1px solid #262b49; white-space: nowrap; }
+    table.rankings thead th::after { content: ''; position: absolute; right: 8px; top: 50%; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid transparent; border-bottom: 6px solid transparent; transform: translateY(-50%); opacity: 0.25; transition: opacity 0.2s ease, transform 0.2s ease; }
+    table.rankings thead th[data-sort-dir="desc"]::after { border-top: 6px solid var(--muted); border-bottom: none; opacity: 0.7; transform: translateY(-60%); }
+    table.rankings thead th[data-sort-dir="asc"]::after { border-bottom: 6px solid var(--muted); border-top: none; opacity: 0.7; transform: translateY(-40%); }
+    table.rankings tbody td { padding: 9px 12px; font-size: 12px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+    table.rankings tbody tr:nth-child(even) { background: rgba(15, 30, 45, 0.02); }
     table.rankings tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
     table.rankings tbody td.rank-cell { width: 48px; text-align: right; font-weight: 600; color: var(--muted); }
-    table.rankings tbody tr:hover { filter: brightness(1.05); }
 
-    .empty-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
-    .empty-card { padding: 8px 12px; background: var(--panel-2); border-radius: 8px; border: 1px solid var(--grid); }
+    .empty-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .empty-card { padding: 10px 14px; background: var(--panel-2); border-radius: 10px; border: 1px solid var(--grid); }
 
     .view-block { width: 100%; }
 
-    .comparison-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:12px; }
-    .comparison-controls label { display:flex; align-items:center; gap:6px; font-size:12px; color: var(--muted); }
+    .comparison-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .comparison-controls label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
     .comparison-controls input[type="range"] { width: 180px; }
     .comparison-results { margin-top: 8px; }
-    .comparison-results details { background: #151a30; border: 1px solid #262b49; border-radius: 10px; margin-bottom: 12px; }
+    .comparison-results details { background: var(--panel-2); border: 1px solid var(--grid); border-radius: 12px; margin-bottom: 12px; }
     .comparison-results details:last-child { margin-bottom: 0; }
-    .comparison-results summary { list-style: none; cursor: pointer; padding: 12px 14px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-    .comparison-results summary::-webkit-details-marker { display:none; }
+    .comparison-results summary { list-style: none; cursor: pointer; padding: 12px 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .comparison-results summary::-webkit-details-marker { display: none; }
     .comparison-body { padding: 0 14px 14px 14px; }
     .comparison-body .comp-question { margin-bottom: 12px; }
-    .comp-text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; white-space: pre-wrap; background:#11152b; border:1px solid #202545; border-radius:8px; padding:8px; color:#d8ddff; }
-    .comp-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap:12px; }
-    .comp-side { border:1px solid #202545; border-radius:8px; background:#161c33; padding:10px; }
-    .comp-side h4 { margin:0 0 6px 0; font-size:13px; color:#dce1ff; }
-    .comp-meta { font-size:12px; color: var(--muted); margin-bottom:6px; }
+    .comp-text { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; white-space: pre-wrap; background: rgba(10, 91, 211, 0.06); border: 1px solid var(--grid); border-radius: 8px; padding: 8px; color: var(--text); }
+    .comp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .comp-side { border: 1px solid var(--grid); border-radius: 10px; background: var(--panel); padding: 12px; }
+    .comp-side h4 { margin: 0 0 6px 0; font-size: 13px; color: var(--text); }
+    .comp-meta { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
     .comp-meta strong { color: var(--text); }
-    .comp-empty { font-size:12px; color: var(--muted); padding:12px 0; }
-    .diff-chip { padding:3px 8px; border-radius:999px; background:#3a1a1a; border:1px solid #6a2a2a; color:#ffb0b0; font-size:12px; }
+    .comp-empty { font-size: 12px; color: var(--muted); padding: 12px 0; }
+    .diff-chip { padding: 3px 10px; border-radius: 999px; background: rgba(200, 69, 69, 0.12); border: 1px solid rgba(200, 69, 69, 0.3); color: var(--bad); font-size: 12px; }
+
+    body.screenshot {
+      background: #ffffff;
+    }
+    body.screenshot::after { display: none; }
+    body.screenshot header {
+      box-shadow: none;
+      border: 1px solid var(--grid);
+    }
+    body.screenshot header .actions { display: none; }
+    body.screenshot .card,
+    body.screenshot .table-wrap {
+      box-shadow: none;
+      border-color: #cfd8df;
+    }
+    body.screenshot .card .hd { background: #f4f7f9; }
+    body.screenshot #chartWrap { background: #ffffff; }
+    body.screenshot #scoreCanvas { height: 420px; }
+    body.screenshot .tooltip { display: none !important; }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 720px) {
+      body { padding: 20px 16px 34px; }
+      header { padding: 12px 14px; }
+      header h1 { font-size: 15px; letter-spacing: 0.1em; }
+      #scoreCanvas { height: 320px; }
+      .card .hd, .card .bd { padding: 14px; }
+      .kv { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      body { background: #ffffff; }
+      body::after { display: none; }
+      header .actions { display: none; }
+      .card, .table-wrap { box-shadow: none; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; transition: none !important; }
+    }
   </style>
 </head>
 <body>
@@ -172,6 +398,7 @@ HTML = """
         </label>
         <button class="btn" id="expandAll" type="button">Expand All</button>
         <button class="btn" id="collapseAll" type="button">Collapse All</button>
+        <button class="btn" id="screenshotToggle" type="button">Screenshot Mode</button>
         <button class="btn" id="themeToggle" type="button">Toggle Theme</button>
       </div>
     </header>
@@ -323,6 +550,13 @@ HTML = """
     {% if not hide_questions %}
     <section class="sect">
       <h2>Per-Question Details</h2>
+      {% if detail_level == 'compact' %}
+        <div class="card note">
+          <div class="bd">
+            <p class="muted">Compact view: model answers, justifications, missed points, and images are omitted to keep the report lightweight.</p>
+          </div>
+        </div>
+      {% endif %}
       {% for view in views %}
         <div class="view-block" data-grader-view="{{ view.id }}" data-section="questions" {% if not view.active %}style="display:none"{% endif %}>
           {% if view.is_all %}
@@ -381,26 +615,28 @@ HTML = """
                           <span class="scorechip {{ bucket }}">Score: {{ "%.3f"|format(r.score) }}</span>
                         {% endif %}
                         {% if r.harmful %}<span class="scorechip score-bad">Harmful</span>{% endif %}
-                        {% if r.images and r.images|length > 0 %}
+                        {% if detail_level == 'full' and r.images and r.images|length > 0 %}
                           <button class="btn toggle" type="button" data-target="img-{{ view.id }}-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">Show {{ r.images|length }} image{{ 's' if r.images|length>1 else '' }}</button>
                         {% endif %}
                       </summary>
                       <div class="question"><div class="k">Question</div><div class="mono">{{ r.question_text }}</div></div>
-                      {% if r.answer_text %}<div class="answer"><div class="k">Reference Answer</div><div class="mono">{{ r.answer_text }}</div></div>{% endif %}
-                      {% if r.rejected %}
-                        <div class="answer"><div class="k">Model Answer</div><div class="mono">∅ No answer (rejected)</div></div>
-                      {% else %}
-                        <div class="answer"><div class="k">Model Answer</div><div class="mono">{{ r.answer }}</div></div>
-                        <div class="just"><div class="k">Justification</div><div class="mono">{{ r.justification }}</div></div>
+                      {% if detail_level == 'full' and r.answer_text %}<div class="answer"><div class="k">Reference Answer</div><div class="mono">{{ r.answer_text }}</div></div>{% endif %}
+                      {% if detail_level == 'full' %}
+                        {% if r.rejected %}
+                          <div class="answer"><div class="k">Model Answer</div><div class="mono">∅ No answer (rejected)</div></div>
+                        {% else %}
+                          <div class="answer"><div class="k">Model Answer</div><div class="mono">{{ r.answer }}</div></div>
+                          <div class="just"><div class="k">Justification</div><div class="mono">{{ r.justification }}</div></div>
+                        {% endif %}
                       {% endif %}
-                      {% if r.missed and r.missed|length>0 %}
+                      {% if detail_level == 'full' and r.missed and r.missed|length>0 %}
                         <div class="kv"><div class="k">Missed points</div><div>
                           <ul>
                             {% for m in r.missed %}<li class="mono">{{ m }}</li>{% endfor %}
                           </ul>
                         </div></div>
                       {% endif %}
-                      {% if r.images and r.images|length > 0 %}
+                      {% if detail_level == 'full' and r.images and r.images|length > 0 %}
                         <div class="gallery" id="img-{{ view.id }}-{{ r.model_slug }}-{{ r.qid|replace('.', '_') }}">
                           <div class="k">Images</div>
                           <div class="thumbs">
@@ -436,15 +672,27 @@ HTML = """
       const DATA = JSON.parse(document.getElementById('report-data').textContent);
       const canvas = document.getElementById('scoreCanvas');
       const ctx = canvas.getContext('2d');
-      const DPR = window.devicePixelRatio || 1;
-      canvas.width = canvas.clientWidth * DPR;
-      canvas.height = canvas.clientHeight * DPR;
-      ctx.scale(DPR, DPR);
+      const cssVar = (name, fallback) => {
+        const val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+        return val || fallback;
+      };
+      let barsScore = [];
+      let barsZeroed = [];
+      let barsReject = [];
 
-      const PADDING = {l: 180, r: 40, t: 20, b: 30};
-      const W = canvas.clientWidth, H = canvas.clientHeight;
-      const innerW = W - PADDING.l - PADDING.r;
-      const innerH = H - PADDING.t - PADDING.b;
+      let DPR = window.devicePixelRatio || 1;
+      const resizeCanvas = () => {
+        DPR = window.devicePixelRatio || 1;
+        canvas.width = canvas.clientWidth * DPR;
+        canvas.height = canvas.clientHeight * DPR;
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        render(1);
+      };
+
+      const PADDING = {l: 190, r: 46, t: 24, b: 34};
+      let W = canvas.clientWidth, H = canvas.clientHeight;
+      let innerW = W - PADDING.l - PADDING.r;
+      let innerH = H - PADDING.t - PADDING.b;
 
       const categories = DATA.meta.categories || [];
       const GRADERS = DATA.graders || {};
@@ -453,10 +701,6 @@ HTML = """
       let currentGrader = DATA.default || (ORDER.length ? ORDER[0] : null);
       let currentCat = '';
       let mode = 'zeroed';
-
-      let barsScore = [];
-      let barsZeroed = [];
-      let barsReject = [];
 
       const tip = document.getElementById('tip');
       const graderSelect = document.getElementById('graderSelect');
@@ -476,8 +720,8 @@ HTML = """
       const rankingStates = new Map();
 
       const colorForIdx = (i) => {
-        const hue = (i * 137.508) % 360;
-        return `hsl(${hue}deg 70% 55%)`;
+        const hue = (i * 37) % 360;
+        return `hsl(${hue}deg 55% 50%)`;
       };
 
       const escapeHtml = (value) => {
@@ -513,16 +757,19 @@ HTML = """
       }
 
       function drawAxes() {
+        W = canvas.clientWidth; H = canvas.clientHeight;
+        innerW = W - PADDING.l - PADDING.r;
+        innerH = H - PADDING.t - PADDING.b;
         ctx.clearRect(0, 0, W, H);
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--panel-2') || '#f4f6ff';
+        ctx.fillStyle = cssVar('--panel-2', '#f6f9fb');
         ctx.fillRect(PADDING.l, PADDING.t, innerW, innerH);
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--grid');
+        ctx.fillStyle = cssVar('--grid', '#dfe6eb');
         for (let i=0;i<=5;i++) {
           const x = PADDING.l + innerW*(i/5);
           ctx.fillRect(x, PADDING.t, 1, innerH);
         }
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--muted');
-        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
+        ctx.fillStyle = cssVar('--muted', '#5f707b');
+        ctx.font = '12px \"IBM Plex Sans\", sans-serif';
         for (let i=0;i<=5;i++) {
           const x = PADDING.l + innerW*(i/5);
           const val = (i/5);
@@ -546,6 +793,9 @@ HTML = """
           totalH = bars.length * (rowH + gap) - gap;
         }
         const offsetY = PADDING.t + Math.max(0, (innerH - totalH)/2);
+        const chipBg = cssVar('--chip', '#e7f0ff');
+        const chipText = cssVar('--chip-text', '#13408c');
+        const labelColor = cssVar('--text', '#1a2a33');
         bars.forEach((b, i) => {
           const y = offsetY + i*(rowH+gap);
           const w = Math.max(0, b.avg) * innerW * progress;
@@ -556,13 +806,14 @@ HTML = """
           ctx.beginPath();
           ctx.rect(0, y, PADDING.l - 8, rowH);
           ctx.clip();
-          ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text');
-          ctx.fillText(b.model, 12, y + rowH*0.7, PADDING.l - 24);
+          ctx.fillStyle = labelColor;
+          ctx.font = '12px \"IBM Plex Sans\", sans-serif';
+          ctx.fillText(b.model, 12, y + rowH*0.7, PADDING.l - 28);
           ctx.restore();
           const chipW = 60;
-          ctx.fillStyle = '#0008';
+          ctx.fillStyle = chipBg;
           ctx.fillRect(PADDING.l + Math.max(2,w) - chipW, y, chipW, rowH);
-          ctx.fillStyle = '#fff';
+          ctx.fillStyle = chipText;
           const disp = (mode === 'reject') ? (b.avg*100).toFixed(1)+'%' : (b.avg).toFixed(3);
           ctx.fillText(disp, PADDING.l + Math.max(2,w) - chipW + 6, y + rowH*0.7);
           b._geom = {x:PADDING.l, y, w:(Math.max(0, b.avg))*innerW, h:rowH};
@@ -914,12 +1165,26 @@ HTML = """
       document.addEventListener('click', toggleImages);
 
       const themeToggle = document.getElementById('themeToggle');
+      const screenshotToggle = document.getElementById('screenshotToggle');
       const applyTheme = (t) => { document.documentElement.setAttribute('data-theme', t); localStorage.setItem('theme', t); };
       const initialTheme = localStorage.getItem('theme') || 'light';
       applyTheme(initialTheme);
       themeToggle && themeToggle.addEventListener('click', () => {
         const cur = document.documentElement.getAttribute('data-theme') || 'light';
         applyTheme(cur === 'light' ? 'dark' : 'light');
+        render(1);
+      });
+      const applyScreenshot = (on) => {
+        document.body.classList.toggle('screenshot', on);
+        localStorage.setItem('screenshot', on ? '1' : '0');
+        if (screenshotToggle) {
+          screenshotToggle.textContent = on ? 'Exit Screenshot' : 'Screenshot Mode';
+        }
+        resizeCanvas();
+      };
+      applyScreenshot(localStorage.getItem('screenshot') === '1');
+      screenshotToggle && screenshotToggle.addEventListener('click', () => {
+        applyScreenshot(!document.body.classList.contains('screenshot'));
       });
 
       const expandAll = document.getElementById('expandAll');
@@ -931,6 +1196,10 @@ HTML = """
       collapseAll?.addEventListener('click', () => {
         const scope = document.querySelector(`[data-grader-view="${currentGrader}"][data-section="questions"]`);
         scope?.querySelectorAll('details.mcard').forEach((d) => d.open = false);
+      });
+
+      window.addEventListener('resize', () => {
+        resizeCanvas();
       });
 
       function renderComparisonSide(sideData, baseId, suffix) {
@@ -1076,6 +1345,7 @@ HTML = """
       setupRankingTables();
       currentGrader = resolveGrader(currentGrader);
       setActive('mode-zeroed');
+      resizeCanvas();
       setGrader(currentGrader);
       refreshCategoryColorsFor(currentGrader);
     </script>
@@ -2159,30 +2429,34 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
             qid_set.update(counter.keys())
         qids = sorted(qid_set, key=_qid_key)
 
-    data_json = json.dumps({
-        "meta": {
-            "qids": qids,
-            "models": models,
-            "total_questions": len(qids),
-            "categories": category_options,
-        },
-        "order": [view["id"] for view in views],
-        "default": views[0]["id"] if views else "",
-        "graders": {
-            view["id"]: {
-                "label": view["label"],
-                "bars_exclude": view["bars_exclude"],
-                "bars_zeroed": view["bars_zeroed"],
-                "bars_reject": view["bars_reject"],
-                "cat_bars": view["cat_bars"],
-                "total_empty": view["total_empty"],
-            }
-            for view in views
-        },
-        "comparisons": {
-            "pairs": comparison_pairs,
-        },
-    })
+    def _build_data_json(include_comparisons: bool) -> str:
+        return json.dumps({
+            "meta": {
+                "qids": qids,
+                "models": models,
+                "total_questions": len(qids),
+                "categories": category_options,
+            },
+            "order": [view["id"] for view in views],
+            "default": views[0]["id"] if views else "",
+            "graders": {
+                view["id"]: {
+                    "label": view["label"],
+                    "bars_exclude": view["bars_exclude"],
+                    "bars_zeroed": view["bars_zeroed"],
+                    "bars_reject": view["bars_reject"],
+                    "cat_bars": view["cat_bars"],
+                    "total_empty": view["total_empty"],
+                }
+                for view in views
+            },
+            "comparisons": {
+                "pairs": comparison_pairs if include_comparisons else [],
+            },
+        })
+
+    data_json_full = _build_data_json(include_comparisons=True)
+    data_json_compact = _build_data_json(include_comparisons=False)
 
     default_view = views[0] if views else {"label": "All graders (avg)", "total_empty": 0}
 
@@ -2191,7 +2465,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         total=len(qids),
         models=models,
         views=views,
-        data_json=data_json,
+        data_json=data_json_full,
         default_view=default_view,
         default_view_id=views[0]["id"] if views else "",
         category_options=category_options,
@@ -2199,8 +2473,27 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         comparison_pairs=comparison_pairs,
         has_comparisons=has_comparisons,
         hide_questions=False,
+        detail_level="full",
     )
     html_path.write_text(html, encoding="utf-8")
+
+    # Generate compact version (question text + scores, without answers/justifications/images/comparisons)
+    compact_html_path = html_path.parent / "report_compact.html"
+    compact_html = tpl.render(
+        total=len(qids),
+        models=models,
+        views=views,
+        data_json=data_json_compact,
+        default_view=default_view,
+        default_view_id=views[0]["id"] if views else "",
+        category_options=category_options,
+        show_empty_section=show_empty_section,
+        comparison_pairs=[],
+        has_comparisons=False,
+        hide_questions=False,
+        detail_level="compact",
+    )
+    compact_html_path.write_text(compact_html, encoding="utf-8")
     
     # Generate public version (without question details)
     public_html_path = html_path.parent / "report_public.html"
@@ -2208,7 +2501,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         total=len(qids),
         models=models,
         views=views,
-        data_json=data_json,
+        data_json=data_json_compact,
         default_view=default_view,
         default_view_id=views[0]["id"] if views else "",
         category_options=category_options,
@@ -2216,6 +2509,7 @@ def emit_report(csv_path: Path, html_path: Path, dataset_path: Optional[Path] = 
         comparison_pairs=[],  # Remove question-level comparisons
         has_comparisons=False,  # Disable comparison section
         hide_questions=True,  # Hide per-question details
+        detail_level="public",
     )
     public_html_path.write_text(public_html, encoding="utf-8")
     

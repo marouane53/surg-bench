@@ -4,13 +4,14 @@ This document explains how the HTML and Markdown reports are generated.
 
 ## Overview
 
-The reporting system now emits five artifacts from the graded CSV files:
+The reporting system now emits six artifacts from the graded CSV files:
 
 1. **HTML Report (Full)** (`data/out/graded/report.html`) – Complete interactive report with all details
-2. **HTML Report (Public)** (`data/out/graded/report_public.html`) – Public-friendly version without copyrighted questions
-3. **Markdown Summary** (`data/out/reports/grading_stats_summary.md`) – Static text summary
-4. **Structured Data Bundle** (`data/out/graded/report_data.json`) – Machine-readable dump of every ranking, statistic, and graded record
-5. **Rankings CSV** (`data/out/graded/report_rankings.csv`) – Flat table of model rankings per view/metric for quick spreadsheet work
+2. **HTML Report (Compact)** (`data/out/graded/report_compact.html`) – Question text + scores, without model answers, justifications, images, or grader comparisons
+3. **HTML Report (Public)** (`data/out/graded/report_public.html`) – Public-friendly version without copyrighted questions
+4. **Markdown Summary** (`data/out/reports/grading_stats_summary.md`) – Static text summary
+5. **Structured Data Bundle** (`data/out/graded/report_data.json`) – Machine-readable dump of every ranking, statistic, and graded record
+6. **Rankings CSV** (`data/out/graded/report_rankings.csv`) – Flat table of model rankings per view/metric for quick spreadsheet work
 
 All reports contain the **same numerical statistics** and are generated from the same underlying data.
 
@@ -50,6 +51,19 @@ The **full HTML report** (`report.html`) also includes copyrighted content:
 - **Grader comparisons** - Side-by-side comparison showing where graders disagree on specific questions
 - **Images** - Associated question images
 
+## Compact HTML Report
+
+The **compact HTML report** (`report_compact.html`) is designed for sharing when the full report is too large:
+
+✅ **Includes:**
+- Aggregate statistics, rankings, and category breakdowns
+- Per-question scores and question text
+
+❌ **Omits:**
+- Model answers, justifications, missed points
+- Images
+- Grader comparison drilldowns
+
 ## Public HTML Report
 
 The **public HTML report** (`report_public.html`) is designed for sharing and publication:
@@ -67,7 +81,7 @@ The **public HTML report** (`report_public.html`) is designed for sharing and pu
 - Question-level grader comparisons
 - Associated images
 
-This makes it **~55% smaller** (33MB vs 74MB) and safe to publish without copyright concerns.
+This makes it much smaller and safe to publish without copyright concerns.
 
 ## Structured Data Bundle (`report_data.json`)
 
@@ -100,6 +114,7 @@ This automatically:
   ```
   Reports generated:
     HTML (full): data/out/graded/report.html
+    HTML (compact): data/out/graded/report_compact.html
     HTML (public): data/out/graded/report_public.html
     Markdown: data/out/reports/grading_stats_summary.md
     Data bundle: data/out/graded/report_data.json
@@ -126,9 +141,10 @@ All report artifacts are generated from the same data pipeline using the `emit_r
 
 ## Report Locations
 
-- **HTML Report (Full)**: `data/out/graded/report.html` (~74 MB)
-- **HTML Report (Public)**: `data/out/graded/report_public.html` (~33 MB)
-- **Markdown Summary**: `data/out/reports/grading_stats_summary.md` (~15 KB)
-- **Structured Data Bundle**: `data/out/graded/report_data.json` (≈5–8 MB depending on dataset size)
-- **Rankings CSV**: `data/out/graded/report_rankings.csv` (~50 KB)
+- **HTML Report (Full)**: `data/out/graded/report.html` (largest; includes per-question answers + images)
+- **HTML Report (Compact)**: `data/out/graded/report_compact.html` (shareable; question text + scores only)
+- **HTML Report (Public)**: `data/out/graded/report_public.html` (shareable; no question text)
+- **Markdown Summary**: `data/out/reports/grading_stats_summary.md`
+- **Structured Data Bundle**: `data/out/graded/report_data.json` (largest data export)
+- **Rankings CSV**: `data/out/graded/report_rankings.csv`
 - **Source Data**: `data/out/graded/scores__*.csv` and `empty_answers__*.csv`

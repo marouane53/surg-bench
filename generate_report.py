@@ -34,8 +34,11 @@ def main():
         dataset_path,
         empty_answers_dir,
     )
+    compact_html_path = html_path.parent / "report_compact.html"
     print(f"\nReports generated:")
     print(f"  HTML (full): {html_path}")
+    if compact_html_path.exists():
+        print(f"  HTML (compact): {compact_html_path}")
     print(f"  HTML (public): {public_html_path}")
     print(f"  Markdown: {summary_path}")
     print(f"  Data bundle: {data_bundle_path}")

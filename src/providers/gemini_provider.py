@@ -17,6 +17,9 @@ class GeminiProvider(Provider):
             raise ImportError("google-genai package required for GeminiProvider")
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+    def _is_gemini_3(self) -> bool:
+        return str(self.model).startswith("gemini-3")
+
     def supports_images(self) -> bool:
         return True
 
@@ -50,10 +53,40 @@ class GeminiProvider(Provider):
     def ask(self, messages: List[Dict[str, Any]], **kwargs) -> Tuple[str, int]:
         start = time.time()
         system_instruction, contents = self._split_messages(messages)
-        cfg = types.GenerateContentConfig(
-            temperature=kwargs.get("temperature", 0.2),
-            system_instruction=[system_instruction] if system_instruction else None
-        )
+        cfg_kwargs: Dict[str, Any] = {
+            "system_instruction": [system_instruction] if system_instruction else None,
+        }
+
+        # Gemini 3 models recommend leaving temperature at the default (1.0) and
+        # some endpoints may reject custom temperatures. For Gemini 2.5, we keep
+        # a low default for more deterministic benchmark outputs.
+        if not self._is_gemini_3():
+            cfg_kwargs["temperature"] = kwargs.get("temperature", 0.2)
+
+        # Optional Gemini "thinking" controls:
+        # - Gemini 3 uses thinking_level (low/high)
+        # - Gemini 2.5 uses thinking_budget (0 disables thinking, 1024+ enables)
+        thinking_cfg = None
+        ThinkingConfig = getattr(types, "ThinkingConfig", None)
+        if ThinkingConfig is not None:
+            if self._is_gemini_3():
+                thinking_level = kwargs.get("thinking_level")
+                if thinking_level:
+                    thinking_cfg = ThinkingConfig(thinking_level=str(thinking_level).lower())
+            else:
+                thinking_budget = kwargs.get("thinking_budget")
+                if thinking_budget is not None:
+                    thinking_cfg = ThinkingConfig(thinking_budget=int(thinking_budget))
+
+        if thinking_cfg is not None:
+            cfg_kwargs["thinking_config"] = thinking_cfg
+
+        try:
+            cfg = types.GenerateContentConfig(**cfg_kwargs)
+        except TypeError:
+            # Older google-genai versions may not support thinking_config.
+            cfg_kwargs.pop("thinking_config", None)
+            cfg = types.GenerateContentConfig(**cfg_kwargs)
         resp = self.client.models.generate_content(
             model=self.model,
             contents=contents,

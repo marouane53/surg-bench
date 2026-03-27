@@ -224,7 +224,7 @@ class OpenAIGrader(Grader):
                 if status == "incomplete" and (resp_dict.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
                     max_tokens = min(int(max_tokens * 2), 4096)
                     params["max_output_tokens"] = max_tokens
-                    # ensure we stay in minimal effort for retries
+                    # ensure we stay in the lowest effort for retries
                     params["reasoning"] = {"effort": "minimal"}
                     continue
                 if not raw.strip():
@@ -273,7 +273,7 @@ class GeminiGrader(Grader):
                 resp = self.client.models.generate_content(
                     model=self.model,
                     contents=[text],
-                    config=types.GenerateContentConfig(temperature=0)
+                    config=types.GenerateContentConfig(**({"temperature": 0} if not str(self.model).startswith("gemini-3") else {}))
                 )
                 raw = resp.text or "{}"
                 data = _robust_json_parse(raw)

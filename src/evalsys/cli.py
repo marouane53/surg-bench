@@ -118,6 +118,8 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
         max_tokens: int = typer.Option(0, help="Max output tokens (provider-specific). 0 = auto (8192 for OpenAI reasoning)"),
         reasoning_effort: Optional[str] = typer.Option(None, help="OpenAI reasoning effort for GPT-5: minimal, low, medium, high"),
         anthropic_thinking_budget: Optional[int] = typer.Option(None, help="Enable Anthropic 'thinking' with a budget in tokens (e.g., 16000)"),
+        gemini_thinking_level: Optional[str] = typer.Option(None, help="Gemini 3 thinking level: low/high (default: high)"),
+        gemini_thinking_budget: Optional[int] = typer.Option(None, help="Gemini 2.5 thinking budget in tokens (0 disables thinking)"),
         resume: bool = typer.Option(True, help="Resume from existing runs: skip QIDs already answered and append new results")):
     # ensure env vars from .env are available for providers (OPENAI_API_KEY, GEMINI_API_KEY, ...)
     _load_env_file()
@@ -144,9 +146,12 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
 
         eff = None
         if provider_name == "openai-reasoning":
+            allowed_efforts = {"none", "minimal", "low", "medium", "high"}
             if reasoning_effort:
                 eff = reasoning_effort.strip().lower()
-                if eff not in {"minimal", "low", "medium", "high"}:
+                if eff == "none":
+                    eff = "minimal"
+                if eff not in allowed_efforts:
                     warn(f"Unknown reasoning effort '{reasoning_effort}', defaulting to 'minimal'")
                     eff = "minimal"
             else:
@@ -159,6 +164,8 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
         # Allow CLI to override reasoning effort for reasoning models post-instantiation
         if provider_name == "openai-reasoning" and reasoning_effort:
             eff_cli = reasoning_effort.strip().lower()
+            if eff_cli == "none":
+                eff_cli = "minimal"
             if eff_cli in {"minimal", "low", "medium", "high"}:
                 try:
                     pv.effort = eff_cli
@@ -223,6 +230,11 @@ def run(models: str = typer.Option("openai-reasoning:gpt-5,gemini:gemini-2.5-fla
                         call_kwargs["max_tokens"] = max_tokens
                     if provider_name == "anthropic" and anthropic_thinking_budget:
                         call_kwargs["thinking"] = {"type": "enabled", "budget_tokens": int(anthropic_thinking_budget)}
+                    if provider_name == "gemini":
+                        if gemini_thinking_level:
+                            call_kwargs["thinking_level"] = gemini_thinking_level
+                        if gemini_thinking_budget is not None:
+                            call_kwargs["thinking_budget"] = gemini_thinking_budget
                     text, ms = _safe_ask(pv, msg["messages"], **call_kwargs)
                     total_ms += ms
 
@@ -491,7 +503,10 @@ def grade(dataset: str = typer.Option("data/out/dataset.jsonl"),
         Path(dataset),
         Path(out_dir),
     )
+    compact_out = html_out.parent / "report_compact.html"
     info(f"Wrote HTML report (full): {html_out}")
+    if compact_out.exists():
+        info(f"Wrote HTML report (compact): {compact_out}")
     info(f"Wrote HTML report (public): {public_out}")
     info(f"Wrote Markdown summary: {summary_out}")
     info(f"Wrote data bundle JSON: {data_out}")
@@ -519,7 +534,10 @@ def report(scores: str = typer.Option("data/out/graded", help="Path to scores.cs
     ds_path = Path(dataset)
     info(f"Generating report from {csv_path} (empty path: {empty_path})")
     html_out, public_out, summary_out, data_out, rankings_out = emit_report(csv_path, html_path, ds_path, empty_path)
+    compact_out = html_out.parent / "report_compact.html"
     info(f"Wrote HTML report (full): {html_out}")
+    if compact_out.exists():
+        info(f"Wrote HTML report (compact): {compact_out}")
     info(f"Wrote HTML report (public): {public_out}")
     info(f"Wrote Markdown summary: {summary_out}")
     info(f"Wrote data bundle JSON: {data_out}")

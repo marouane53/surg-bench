@@ -19,8 +19,11 @@ class OpenAIReasoningProvider(Provider):
         self._api_key = api_key or os.getenv("OPENAI_API_KEY")
         # Default to public OpenAI endpoint if not provided
         self._base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
-        # OpenAI Responses API supports: "low" | "medium" | "high" | "minimal"
+        # OpenAI Responses API supports: "minimal" | "low" | "medium" | "high"
+        # (treat "none" as an alias for "minimal" for compatibility)
         self.effort = (effort or "minimal").lower()
+        if self.effort == "none":
+            self.effort = "minimal"
 
     def supports_images(self) -> bool:
         return True
