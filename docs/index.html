@@ -33,6 +33,7 @@
         <nav class="site-nav" aria-label="Sections">
           <a href="#overview">Overview</a>
           <a href="#results">Results</a>
+          <a href="#agreement">Agreement</a>
           <a href="#categories">Categories</a>
           <a href="#example">Example</a>
           <a href="#method">Method</a>
@@ -139,7 +140,7 @@
         </div>
         <div>
           <p class="micro-label">How to use this page</p>
-          <p>Start with the benchmark board, use the specialty views to see where performance is broad or narrow, then open the example case for one question-level walkthrough.</p>
+          <p>Start with the benchmark board, check grader agreement, use the specialty views to see where performance is broad or narrow, then open the example case for one question-level walkthrough.</p>
         </div>
       </section>
 
@@ -222,9 +223,57 @@
         </article>
       </section>
 
-      <section class="results-header reveal" id="categories">
+      <section class="results-header reveal" id="agreement">
         <div>
           <p class="section-index">02</p>
+          <h2>Grader agreement</h2>
+        </div>
+        <p class="section-copy">
+          Two independent grader models scored each open-ended response. This section summarizes how closely they aligned
+          across the full benchmark and where the largest aggregate differences appeared.
+        </p>
+      </section>
+
+      <section class="agreement-grid">
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Agreement summary</p>
+              <h3>How closely the graders matched</h3>
+            </div>
+          </div>
+          <p class="agreement-copy" id="agreement-copy">
+            Loading grader agreement summary...
+          </p>
+          <div class="agreement-stats" id="agreement-stats"></div>
+        </article>
+
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Agreement density</p>
+              <h3>Gemini 2.5 Flash against GPT-5 Mini</h3>
+            </div>
+            <p class="module-note">The diagonal marks exact agreement; denser cells show where paired scores concentrate.</p>
+          </div>
+          <div id="agreement-density-chart" class="chart-surface" aria-label="Grader agreement density chart"></div>
+        </article>
+
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Gap by specialty</p>
+              <h3>Where the graders differed most</h3>
+            </div>
+            <p class="module-note">Bars show mean absolute score gap by specialty. Lower is closer agreement.</p>
+          </div>
+          <div id="agreement-category-chart" class="chart-surface" aria-label="Grader agreement by specialty"></div>
+        </article>
+      </section>
+
+      <section class="results-header reveal" id="categories">
+        <div>
+          <p class="section-index">03</p>
           <h2>Specialty breakdown</h2>
         </div>
         <p class="section-copy">
@@ -342,7 +391,7 @@
 
       <section class="results-header reveal" id="method">
         <div>
-          <p class="section-index">03</p>
+          <p class="section-index">04</p>
           <h2>How Surg Bench works</h2>
         </div>
         <p class="section-copy">

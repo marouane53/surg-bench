@@ -222,3 +222,5 @@ data/
 
 # Public GitHub Pages site
 !docs/index.html
+
+/output/

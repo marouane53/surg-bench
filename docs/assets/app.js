@@ -66,6 +66,10 @@
     viewControls: document.getElementById("view-controls"),
     metricControls: document.getElementById("metric-controls"),
     resultsContext: document.getElementById("results-context"),
+    agreementCopy: document.getElementById("agreement-copy"),
+    agreementStats: document.getElementById("agreement-stats"),
+    agreementDensityChart: document.getElementById("agreement-density-chart"),
+    agreementCategoryChart: document.getElementById("agreement-category-chart"),
     rankingTitle: document.getElementById("ranking-title"),
     rankingNote: document.getElementById("ranking-note"),
     rankingChart: document.getElementById("ranking-chart"),
@@ -119,6 +123,11 @@
 
   function formatCount(value) {
     return new Intl.NumberFormat("en-US").format(Number(value));
+  }
+
+  function formatSignedScore(value) {
+    const number = Number(value);
+    return `${number > 0 ? "+" : ""}${number.toFixed(3)}`;
   }
 
   function truncateText(value, maxLength) {
@@ -184,20 +193,43 @@
     return providerColors[provider] || "oklch(0.64 0.08 160)";
   }
 
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
   function heatColor(value, metric) {
     if (metric === "rejectRate") {
-      const normalized = Math.max(0, Math.min(1, value / 0.3));
+      const normalized = clamp(value / 0.3, 0, 1);
       const hue = 152 - normalized * 124;
       const lightness = 0.95 - normalized * 0.24;
       const chroma = 0.03 + normalized * 0.11;
       return `oklch(${lightness} ${chroma} ${hue})`;
     }
 
-    const normalized = Math.max(0, Math.min(1, value));
+    const normalized = clamp(value, 0, 1);
     const hue = 28 + normalized * 126;
     const lightness = 0.96 - normalized * 0.28;
     const chroma = 0.03 + normalized * 0.11;
     return `oklch(${lightness} ${chroma} ${hue})`;
+  }
+
+  function agreementGapColor(value, maxValue) {
+    const normalized = clamp(maxValue ? value / maxValue : 0, 0, 1);
+    const hue = 152 - normalized * 124;
+    const lightness = 0.93 - normalized * 0.22;
+    const chroma = 0.04 + normalized * 0.1;
+    return `oklch(${lightness} ${chroma} ${hue})`;
+  }
+
+  function describeBias(value, firstLabel, secondLabel) {
+    const magnitude = Math.abs(Number(value));
+    if (magnitude < 0.0005) {
+      return "No average scoring bias";
+    }
+    if (value < 0) {
+      return `${secondLabel} scored ${magnitude.toFixed(3)} higher on average`;
+    }
+    return `${firstLabel} scored ${magnitude.toFixed(3)} higher on average`;
   }
 
   function showTooltip(event) {
@@ -504,6 +536,195 @@
         `;
       })
       .join("");
+  }
+
+  function renderAgreementOverview() {
+    const agreement = DATA.graderAgreement;
+    if (!agreement || !refs.agreementCopy || !refs.agreementStats) {
+      return;
+    }
+
+    refs.agreementCopy.textContent = agreement.summary;
+    refs.agreementStats.innerHTML = `
+      <div class="agreement-stat">
+        <span class="agreement-stat__label">Paired scores</span>
+        <strong class="agreement-stat__value">${formatCount(agreement.pairedScoreCount)}</strong>
+      </div>
+      <div class="agreement-stat">
+        <span class="agreement-stat__label">Correlation</span>
+        <strong class="agreement-stat__value">${formatScore(agreement.correlation)}</strong>
+      </div>
+      <div class="agreement-stat">
+        <span class="agreement-stat__label">Mean absolute gap</span>
+        <strong class="agreement-stat__value">${formatScore(agreement.meanAbsoluteGap)}</strong>
+      </div>
+      <div class="agreement-stat">
+        <span class="agreement-stat__label">Within 0.10</span>
+        <strong class="agreement-stat__value">${formatPercent(agreement.withinPointOneShare)}</strong>
+      </div>
+    `;
+  }
+
+  function renderAgreementDensity() {
+    const agreement = DATA.graderAgreement;
+    if (!agreement || !refs.agreementDensityChart) {
+      return;
+    }
+
+    const width = Math.max(refs.agreementDensityChart.clientWidth, 440);
+    const height = 398;
+    const margin = { top: 18, right: 18, bottom: 64, left: 58 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const binCount = agreement.densityGrid.binCount;
+    const matrix = agreement.densityGrid.matrix || [];
+    const maxCellCount = Math.max(agreement.densityGrid.maxCellCount || 0, 1);
+    const cellWidth = plotWidth / binCount;
+    const cellHeight = plotHeight / binCount;
+
+    const backgroundCells = Array.from({ length: binCount }, (_, yIndex) =>
+      Array.from({ length: binCount }, (_, xIndex) => {
+        const x = margin.left + xIndex * cellWidth;
+        const y = margin.top + (binCount - 1 - yIndex) * cellHeight;
+        const diagonalGap = Math.abs((xIndex + 0.5) / binCount - (yIndex + 0.5) / binCount);
+        const agreementStrength = clamp(1 - diagonalGap * 4, 0, 1);
+        const baseColor = agreementGapColor(1 - agreementStrength, 1);
+        const count = matrix[yIndex]?.[xIndex] || 0;
+        const opacity = count > 0 ? 0.28 + (count / maxCellCount) * 0.68 : 0.12;
+        const xMin = xIndex / binCount;
+        const xMax = (xIndex + 1) / binCount;
+        const yMin = yIndex / binCount;
+        const yMax = (yIndex + 1) / binCount;
+        const tooltip = tooltipText([
+          `${agreement.firstGrader.label}: ${xMin.toFixed(2)} to ${xMax.toFixed(2)}`,
+          `${agreement.secondGrader.label}: ${yMin.toFixed(2)} to ${yMax.toFixed(2)}`,
+          `Paired scores: ${formatCount(count)}`,
+        ]);
+
+        return `
+          <rect
+            x="${x}"
+            y="${y}"
+            width="${Math.max(cellWidth - 1, 0)}"
+            height="${Math.max(cellHeight - 1, 0)}"
+            rx="2"
+            fill="${baseColor}"
+            fill-opacity="${opacity}"
+            data-tooltip="${escapeAttribute(tooltip)}"
+          ></rect>
+        `;
+      }).join("")
+    ).join("");
+
+    const ticks = [0, 0.25, 0.5, 0.75, 1];
+    const xTicks = ticks
+      .map((tick) => {
+        const x = margin.left + tick * plotWidth;
+        return `
+          <g>
+            <line x1="${x}" y1="${margin.top}" x2="${x}" y2="${margin.top + plotHeight}" stroke="color-mix(in srgb, var(--ink) 8%, transparent)" />
+            <text x="${x}" y="${height - 26}" text-anchor="middle" fill="var(--muted)" font-size="11">${tick.toFixed(2)}</text>
+          </g>
+        `;
+      })
+      .join("");
+
+    const yTicks = ticks
+      .map((tick) => {
+        const y = margin.top + plotHeight - tick * plotHeight;
+        return `
+          <g>
+            <line x1="${margin.left}" y1="${y}" x2="${margin.left + plotWidth}" y2="${y}" stroke="color-mix(in srgb, var(--ink) 8%, transparent)" />
+            <text x="${margin.left - 10}" y="${y + 4}" text-anchor="end" fill="var(--muted)" font-size="11">${tick.toFixed(2)}</text>
+          </g>
+        `;
+      })
+      .join("");
+
+    refs.agreementDensityChart.innerHTML = `
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Agreement density between graders">
+        ${xTicks}
+        ${yTicks}
+        ${backgroundCells}
+        <line
+          x1="${margin.left}"
+          y1="${margin.top + plotHeight}"
+          x2="${margin.left + plotWidth}"
+          y2="${margin.top}"
+          stroke="color-mix(in srgb, var(--ink) 50%, transparent)"
+          stroke-width="2"
+          stroke-dasharray="6 5"
+        ></line>
+        <text x="${width / 2}" y="${height - 6}" text-anchor="middle" fill="var(--muted)" font-size="12">${escapeHtml(
+          agreement.firstGrader.label
+        )} score</text>
+        <text x="18" y="${height / 2}" transform="rotate(-90 18 ${height / 2})" text-anchor="middle" fill="var(--muted)" font-size="12">${escapeHtml(
+          agreement.secondGrader.label
+        )} score</text>
+      </svg>
+    `;
+
+    attachTooltips(refs.agreementDensityChart);
+  }
+
+  function renderAgreementCategories() {
+    const agreement = DATA.graderAgreement;
+    if (!agreement || !refs.agreementCategoryChart) {
+      return;
+    }
+
+    const rows = [...agreement.categoryGaps];
+    const width = Math.max(refs.agreementCategoryChart.clientWidth, 560);
+    const rowHeight = 34;
+    const height = 24 + rows.length * rowHeight + 48;
+    const margin = { top: 18, right: 66, bottom: 32, left: 176 };
+    const plotWidth = width - margin.left - margin.right;
+    const maxGap = Math.max(...rows.map((row) => row.meanAbsoluteGap), 0.01) * 1.12;
+
+    const axis = Array.from({ length: 5 }, (_, index) => {
+      const value = (maxGap * index) / 4;
+      const x = margin.left + (value / maxGap) * plotWidth;
+      return `
+        <g>
+          <line x1="${x}" y1="${margin.top - 6}" x2="${x}" y2="${height - 34}" stroke="color-mix(in srgb, var(--ink) 8%, transparent)" />
+          <text x="${x}" y="${height - 20}" text-anchor="middle" fill="var(--muted)" font-size="11">${value.toFixed(2)}</text>
+        </g>
+      `;
+    }).join("");
+
+    const bars = rows
+      .map((row, index) => {
+        const y = margin.top + index * rowHeight;
+        const barWidth = (row.meanAbsoluteGap / maxGap) * plotWidth;
+        const tooltip = tooltipText([
+          row.label,
+          `Mean absolute gap: ${formatScore(row.meanAbsoluteGap)}`,
+          describeBias(row.meanSignedGap, agreement.firstGrader.label, agreement.secondGrader.label),
+          `Paired scores: ${formatCount(row.count)}`,
+        ]);
+        return `
+          <g data-tooltip="${escapeAttribute(tooltip)}">
+            <text x="${margin.left - 10}" y="${y + 21}" text-anchor="end" fill="var(--ink)" font-size="12">${escapeHtml(row.label)}</text>
+            <rect x="${margin.left}" y="${y + 8}" rx="999" ry="999" width="${plotWidth}" height="14" fill="color-mix(in srgb, var(--ink) 5%, white)" />
+            <rect x="${margin.left}" y="${y + 8}" rx="999" ry="999" width="${Math.max(barWidth, 2)}" height="14" fill="${agreementGapColor(
+              row.meanAbsoluteGap,
+              maxGap
+            )}" />
+            <text x="${width - 6}" y="${y + 20}" text-anchor="end" fill="var(--ink)" font-size="12">${formatScore(row.meanAbsoluteGap)}</text>
+          </g>
+        `;
+      })
+      .join("");
+
+    refs.agreementCategoryChart.innerHTML = `
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Mean grader gap by specialty">
+        ${axis}
+        ${bars}
+        <text x="${width / 2}" y="${height - 4}" text-anchor="middle" fill="var(--muted)" font-size="12">Mean absolute score gap</text>
+      </svg>
+    `;
+
+    attachTooltips(refs.agreementCategoryChart);
   }
 
   function renderRankingChart(models) {
@@ -865,6 +1086,9 @@
 
     renderControls();
     renderContext(view);
+    renderAgreementOverview();
+    renderAgreementDensity();
+    renderAgreementCategories();
     renderTakeaways(view, rankedModels);
     renderRankingChart(rankedModels);
     renderScatter(view.models);

@@ -275,6 +275,148 @@ def build_category_meta(reference_view: dict[str, Any]) -> list[dict[str, Any]]:
     return categories
 
 
+def average(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return sum(values) / len(values)
+
+
+def pearson_correlation(first_values: list[float], second_values: list[float]) -> float:
+    if not first_values or len(first_values) != len(second_values):
+        return 0.0
+
+    first_mean = average(first_values)
+    second_mean = average(second_values)
+
+    numerator = sum(
+        (first - first_mean) * (second - second_mean)
+        for first, second in zip(first_values, second_values)
+    )
+    first_variance = sum((value - first_mean) ** 2 for value in first_values)
+    second_variance = sum((value - second_mean) ** 2 for value in second_values)
+    denominator = math.sqrt(first_variance * second_variance)
+
+    if denominator == 0:
+        return 0.0
+
+    return numerator / denominator
+
+
+def build_grader_agreement_payload(
+    report_data: dict[str, Any],
+    category_meta: list[dict[str, Any]],
+) -> dict[str, Any]:
+    comparison_pairs = report_data.get("comparison_pairs") or []
+    if not comparison_pairs:
+        return {}
+
+    pair = comparison_pairs[0]
+    first_label = model_label(pair["first"]["label"])
+    second_label = model_label(pair["second"]["label"])
+    bin_count = 20
+    density_matrix = [[0 for _ in range(bin_count)] for _ in range(bin_count)]
+    first_scores: list[float] = []
+    second_scores: list[float] = []
+    absolute_gaps: list[float] = []
+    signed_gaps: list[float] = []
+
+    category_lookup = {category["label"]: category for category in category_meta}
+    category_buckets: dict[str, dict[str, Any]] = {}
+
+    for entry in pair["entries"]:
+        first_score = float(entry["first"]["record"].get("score", 0.0) or 0.0)
+        second_score = float(entry["second"]["record"].get("score", 0.0) or 0.0)
+        absolute_gap = abs(first_score - second_score)
+        signed_gap = first_score - second_score
+
+        first_scores.append(first_score)
+        second_scores.append(second_score)
+        absolute_gaps.append(absolute_gap)
+        signed_gaps.append(signed_gap)
+
+        x_bin = min(bin_count - 1, max(0, int(first_score * bin_count)))
+        y_bin = min(bin_count - 1, max(0, int(second_score * bin_count)))
+        density_matrix[y_bin][x_bin] += 1
+
+        cleaned_category = clean_category_name(entry.get("category_name", ""))
+        category_info = category_lookup.get(cleaned_category)
+        if not category_info:
+            continue
+
+        bucket = category_buckets.setdefault(
+            category_info["id"],
+            {
+                "categoryId": category_info["id"],
+                "label": category_info["label"],
+                "count": 0,
+                "absoluteGaps": [],
+                "signedGaps": [],
+            },
+        )
+        bucket["count"] += 1
+        bucket["absoluteGaps"].append(absolute_gap)
+        bucket["signedGaps"].append(signed_gap)
+
+    sorted_absolute_gaps = sorted(absolute_gaps)
+    mean_absolute_gap = average(absolute_gaps)
+    median_absolute_gap = percentile(sorted_absolute_gaps, 0.5)
+    mean_signed_gap = average(signed_gaps)
+    within_point_one_share = average([1.0 if gap <= 0.1 else 0.0 for gap in absolute_gaps])
+    over_point_two_share = average([1.0 if gap >= (0.2 - 1e-12) else 0.0 for gap in absolute_gaps])
+    correlation = pearson_correlation(first_scores, second_scores)
+    second_grader_higher = mean_signed_gap < 0
+    leniency_gap = abs(mean_signed_gap)
+
+    category_gaps = [
+        {
+            "categoryId": bucket["categoryId"],
+            "label": bucket["label"],
+            "meanAbsoluteGap": round_value(average(bucket["absoluteGaps"])),
+            "meanSignedGap": round_value(average(bucket["signedGaps"])),
+            "count": bucket["count"],
+        }
+        for bucket in category_buckets.values()
+    ]
+    category_gaps.sort(
+        key=lambda item: (-float(item["meanAbsoluteGap"]), item["label"])
+    )
+
+    summary = (
+        f"Responses were scored independently by {first_label} and {second_label}. "
+        f"Across {len(first_scores):,} paired scores, the graders were strongly aligned overall "
+        f"(r = {correlation:.3f}), with a mean absolute gap of {mean_absolute_gap:.3f} and a median gap of "
+        f"{median_absolute_gap:.3f}. "
+        f"{second_label if second_grader_higher else first_label} scored responses "
+        f"{leniency_gap:.3f} higher on average, and the full benchmark analysis also tracks the largest "
+        f"question-level disagreements; this page summarizes the aggregate pattern."
+    )
+
+    return {
+        "firstGrader": {
+            "id": pair["first"]["view"],
+            "label": first_label,
+        },
+        "secondGrader": {
+            "id": pair["second"]["view"],
+            "label": second_label,
+        },
+        "pairedScoreCount": len(first_scores),
+        "correlation": round_value(correlation),
+        "meanAbsoluteGap": round_value(mean_absolute_gap),
+        "medianAbsoluteGap": round_value(median_absolute_gap),
+        "meanSignedGap": round_value(mean_signed_gap),
+        "withinPointOneShare": round_value(within_point_one_share),
+        "overPointTwoShare": round_value(over_point_two_share),
+        "summary": summary,
+        "densityGrid": {
+            "binCount": bin_count,
+            "matrix": density_matrix,
+            "maxCellCount": max(max(row) for row in density_matrix) if density_matrix else 0,
+        },
+        "categoryGaps": category_gaps,
+    }
+
+
 def select_best(
     rows: list[dict[str, Any]],
     value_key: str,
@@ -923,6 +1065,7 @@ def main() -> None:
     reference_view = next((view for view in report_views if not view.get("is_all")), report_views[0])
     category_meta = build_category_meta(reference_view)
     latency_stats = load_latency_stats(runs_dir)
+    grader_agreement = build_grader_agreement_payload(report_data, category_meta)
     showcase_payload = build_showcase_payload(
         dataset_path=dataset_path,
         report_html_path=Path(report_data["meta"]["html_report"]),
@@ -960,6 +1103,7 @@ def main() -> None:
             "fullAnswerCorpusIncluded": False,
             "fullImageCorpusIncluded": False,
         },
+        "graderAgreement": grader_agreement,
         "showcaseExample": showcase_payload,
         "views": [build_view_payload(view, latency_stats) for view in report_views],
     }
