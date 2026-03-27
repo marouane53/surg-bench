@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Surgical Benchmark Public Results</title>
+  <meta
+    name="description"
+    content="Public overview and results for Surg Bench, a benchmark of leading AI models on contemporary surgical exam cases."
+  >
+  <meta property="og:title" content="Surgical Benchmark Public Results">
+  <meta
+    property="og:description"
+    content="Compare 16 AI models across 290 recent surgical cases, with quality, refusal, speed, and specialty-level results."
+  >
+  <meta property="og:type" content="website">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Sora:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  >
+  <link rel="stylesheet" href="./assets/site.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="site-header">
+      <a class="site-mark" href="#top">
+        <span class="site-mark__eyebrow">Surg Bench</span>
+        <span class="site-mark__title">Public Results</span>
+      </a>
+      <nav class="site-nav" aria-label="Sections">
+        <a href="#overview">Overview</a>
+        <a href="#results">Results</a>
+        <a href="#categories">Categories</a>
+        <a href="#method">Method</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero reveal" id="overview">
+        <div class="hero-copy">
+          <p class="hero-kicker">Surgical AI benchmark</p>
+          <h1>Evaluating AI models on contemporary surgical cases.</h1>
+          <p class="hero-body" id="hero-summary">
+            Surg Bench evaluates leading AI models on recent surgical exam cases and shows how they compare on answer
+            quality, refusals, response time, and specialty coverage.
+          </p>
+          <div class="hero-actions">
+            <a class="button button--solid" href="#results">Explore results</a>
+            <a class="button button--ghost" href="#method">Read methodology</a>
+          </div>
+        </div>
+
+        <aside class="hero-panel">
+          <div class="hero-panel__grid">
+            <div class="stat-tile">
+              <span class="stat-tile__label">Cases</span>
+              <strong class="stat-tile__value" id="meta-cases">290</strong>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-tile__label">Sub-prompts</span>
+              <strong class="stat-tile__value" id="meta-subprompts">1,249</strong>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-tile__label">Models</span>
+              <strong class="stat-tile__value" id="meta-models">16</strong>
+            </div>
+            <div class="stat-tile">
+              <span class="stat-tile__label">Categories</span>
+              <strong class="stat-tile__value" id="meta-categories">14</strong>
+            </div>
+          </div>
+
+          <div class="hero-panel__note">
+            <p class="micro-label">About Surg Bench</p>
+            <p>
+              The benchmark is built from a 2025 surgical exam text, which makes it less likely that strong scores
+              come from memorized training data.
+            </p>
+            <p>
+              This page is an introduction to the project and its results, with aggregate charts instead of source
+              cases, answers, and images.
+            </p>
+          </div>
+
+          <div class="hero-panel__stamp">
+            <p class="micro-label">Generated</p>
+            <p id="meta-generated">January 26, 2026</p>
+          </div>
+        </aside>
+      </section>
+
+      <section class="strip reveal">
+        <div>
+          <p class="micro-label">What Surg Bench measures</p>
+          <p>Overall answer quality, answered-only quality, refusal behavior, response time, and specialty-level consistency.</p>
+        </div>
+        <div>
+          <p class="micro-label">How to use this page</p>
+          <p>Start with the benchmark board, then use the scatter plots and heatmap to see where performance is reliable, fast, and broad.</p>
+        </div>
+      </section>
+
+      <section class="results-header reveal" id="results">
+        <div>
+          <p class="section-index">01</p>
+          <h2>Benchmark board</h2>
+        </div>
+        <p class="section-copy" id="results-context">
+          Loading benchmark context...
+        </p>
+      </section>
+
+      <section class="control-rack reveal" aria-label="Result controls">
+        <div class="control-group">
+          <span class="micro-label">View</span>
+          <div id="view-controls" class="pill-row"></div>
+        </div>
+        <div class="control-group">
+          <span class="micro-label">Metric</span>
+          <div id="metric-controls" class="pill-row"></div>
+        </div>
+      </section>
+
+      <section class="results-grid">
+        <article class="module module--ranking reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Ranking graph</p>
+              <h3 id="ranking-title">All questions counted</h3>
+            </div>
+            <p class="module-note" id="ranking-note"></p>
+          </div>
+          <div id="ranking-chart" class="chart-surface" aria-label="Ranked model chart"></div>
+        </article>
+
+        <article class="module module--findings reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Selected view</p>
+              <h3>Reading the board</h3>
+            </div>
+          </div>
+          <div id="takeaway-cards" class="takeaway-list"></div>
+          <div class="table-shell">
+            <table class="data-table" id="top-table">
+              <thead>
+                <tr>
+                  <th>Model</th>
+                  <th>Score</th>
+                  <th>Rejects</th>
+                  <th>Wins</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Quality vs coverage</p>
+              <h3>Answered score against refusal rate</h3>
+            </div>
+            <p class="module-note">Top-right is stronger; left edge is more reliable.</p>
+          </div>
+          <div id="scatter-chart" class="chart-surface" aria-label="Scatter chart"></div>
+        </article>
+
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Speed vs quality</p>
+              <h3>Answered score against response time</h3>
+            </div>
+            <p class="module-note">Top-left is stronger; left edge is faster.</p>
+          </div>
+          <div id="latency-chart" class="chart-surface" aria-label="Answered score against response time"></div>
+        </article>
+      </section>
+
+      <section class="results-header reveal" id="categories">
+        <div>
+          <p class="section-index">02</p>
+          <h2>Specialty breakdown</h2>
+        </div>
+        <p class="section-copy">
+          These views show whether a strong overall rank comes from broad consistency across surgery topics or from a
+          smaller set of standout specialties.
+        </p>
+      </section>
+
+      <section class="module module--heatmap reveal">
+        <div class="module-head">
+          <div>
+            <p class="micro-label">Category heatmap</p>
+            <h3 id="heatmap-title">Per-category score grid</h3>
+          </div>
+          <div class="legend">
+            <span class="legend__label">Lower</span>
+            <span class="legend__ramp" id="heatmap-legend"></span>
+            <span class="legend__label">Higher</span>
+          </div>
+        </div>
+        <div id="heatmap-chart" class="heatmap-shell" aria-label="Category heatmap"></div>
+      </section>
+
+      <section class="leader-grid">
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Category wins</p>
+              <h3>Who leads the most specialties</h3>
+            </div>
+          </div>
+          <div id="leader-chart" class="leader-chart"></div>
+        </article>
+
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Current leaders</p>
+              <h3>Category-by-category winners</h3>
+            </div>
+          </div>
+          <div id="leader-cards" class="leader-cards"></div>
+        </article>
+      </section>
+
+      <section class="results-header reveal" id="method">
+        <div>
+          <p class="section-index">03</p>
+          <h2>How Surg Bench works</h2>
+        </div>
+        <p class="section-copy">
+          This section explains what was tested, how answers were scored, and what is intentionally not reproduced on
+          the public page.
+        </p>
+      </section>
+
+      <section class="method-grid">
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Benchmark design</p>
+              <h3>What Surg Bench evaluates</h3>
+            </div>
+          </div>
+          <div class="prose" id="method-benchmark-copy">
+            <p>
+              Surg Bench evaluates AI models on recent surgical exam cases drawn from a 2025 textbook.
+            </p>
+            <p>
+              This public page shows the benchmark structure, scoring views, and model results without reproducing the
+              protected source material.
+            </p>
+            <p>
+              Because these cases are open-ended and not multiple-choice, answers were graded by two independent model
+              graders rather than by simple answer matching.
+            </p>
+          </div>
+        </article>
+
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">Source material policy</p>
+              <h3>What this page does not reproduce</h3>
+            </div>
+          </div>
+          <ul class="plain-list">
+            <li>Case text from the source book</li>
+            <li>Reference answers and grader justifications</li>
+            <li>Model responses or associated image material</li>
+            <li>Anything that would allow the underlying cases to be reconstructed</li>
+          </ul>
+        </article>
+
+        <article class="module reveal">
+          <div class="module-head">
+            <div>
+              <p class="micro-label">How to read the metrics</p>
+              <h3>What each view is telling you</h3>
+            </div>
+          </div>
+          <ul class="plain-list">
+            <li><strong>All cases</strong> treats rejections and empty answers as zero.</li>
+            <li><strong>Answered only</strong> measures the quality of non-empty responses.</li>
+            <li><strong>Reject rate</strong> shows how often a model declined or failed to answer.</li>
+            <li><strong>Response time</strong> uses the median time taken on answered cases.</li>
+          </ul>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p id="footer-stamp">Generated from benchmark outputs.</p>
+    </footer>
+  </div>
+
+  <div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
+  <script src="./assets/public-benchmark-data.js"></script>
+  <script src="./assets/app.js"></script>
+</body>
+</html>

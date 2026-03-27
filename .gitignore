@@ -219,3 +219,6 @@ logs/
 *.bak
 *.backup
 data/
+
+# Public GitHub Pages site
+!docs/index.html
