@@ -236,6 +236,11 @@
         Each model answer was graded independently by two grader models. This page lets you inspect each grader
         separately or use the averaged view to see where rankings stay consistent.
       </p>
+      <p>
+        Because the cases are open-ended rather than multiple-choice, grading is not based on exact answer matching.
+        Instead, two independent model graders score each response against the reference answer and the expected
+        clinical reasoning.
+      </p>
     `;
   }
 

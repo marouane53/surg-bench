@@ -1,14 +1,23 @@
-# AI Surgical Evaluation System
+# Surg Bench
 
-A comprehensive benchmark that extracts surgical Q&A with images from PDF documents, runs questions across multiple AI providers, and grades responses using LLM-based evaluators.
+Surg Bench is a benchmark for evaluating AI models on contemporary surgical exam cases. It ingests licensed source material from a textbook PDF, runs multiple models on the extracted cases, grades their open-ended answers with two independent LLM graders, and produces full, compact, public, and GitHub Pages-friendly result views.
 
 ## Data Source & Attribution
 
-This benchmark uses questions extracted from **"Surgical Exam Cases"** by **Charles Tan**, Adjunct Assistant Professor, Department of Surgery, Yong Loo Lin School of Medicine, National University of Singapore.
+This benchmark uses surgical cases extracted from **"Surgical Exam Cases"** by **Charles Tan**, Adjunct Assistant Professor, Department of Surgery, Yong Loo Lin School of Medicine, National University of Singapore.
 
 ### Why This Book?
 
 We selected this textbook because it was **published in 2025**, before most current AI models were trained. This ensures the evaluation tests genuine medical reasoning capabilities rather than memorized content, providing a fair and uncontaminated assessment of AI performance on contemporary surgical knowledge.
+
+## Methodology at a Glance
+
+1. **Ingest the source material**: the pipeline extracts case text and associated images from a licensed PDF.
+2. **Run model answers**: each configured model answers the same set of surgical cases.
+3. **Grade open-ended responses**: because these are free-response cases rather than multiple-choice questions, answers are scored by two independent grader models instead of exact string matching.
+4. **Compare multiple views of performance**: the reports show all-cases scoring, answered-only scoring, rejection rate, category breakdowns, and response-time metadata.
+
+In the current public release, the benchmark covers **290 cases** containing **1,249 numbered sub-prompts** across **14 surgical categories**.
 
 ### Running the Benchmark
 
@@ -16,9 +25,9 @@ We selected this textbook because it was **published in 2025**, before most curr
 
 ## Features
 
-- **PDF Extraction**: Converts surgical PDFs into structured Q&A datasets with associated images
+- **PDF Extraction**: Converts surgical PDFs into structured case datasets with associated images
 - **Multi-Provider Support**: OpenAI, Gemini, Anthropic, Groq, xAI, OpenRouter (Mistral & Cohere optional)
-- **Switchable Graders**: GPT-5 Mini or Gemini 2.5 Flash for consistent evaluation
+- **Dual-Grader Evaluation**: GPT-5 Mini and Gemini 2.5 Flash by default, with support for custom grader choices
 - **Comprehensive Reporting**: CSV output, HTML dashboards, JSON data bundles, and ranking-ready CSVs
 - **Resume Support**: Stop and continue runs or grading without losing progress
 
@@ -33,10 +42,12 @@ We selected this textbook because it was **published in 2025**, before most curr
 ```
 surg-bench/
 ├── README.md
+├── generate_public_site.py
 ├── requirements.txt
 ├── pyproject.toml
 ├── .env.template
 ├── providers.yaml
+├── docs/                 # Public GitHub Pages site
 ├── src/
 │   ├── evalsys/           # Core evaluation system
 │   ├── providers/         # AI provider implementations
@@ -73,7 +84,7 @@ surg-bench/
 
 ## Usage
 
-### 1. Extract Q&A from PDF
+### 1. Extract Cases from PDF
 ```bash
 python -m src.evalsys.cli ingest --pdf data/surgical.pdf
 ```
@@ -85,7 +96,7 @@ python -m src.evalsys.cli run --models "openai-reasoning:gpt-5,gemini:gemini-2.5
 ```
 This generates model responses in `data/out/runs/`
 
-> **Tip:** omit `--limit` to run the full dataset (290 questions). The CLI now defaults to the complete set when no limit is provided, so add `--limit` only when you want a smaller smoke test.
+> **Tip:** omit `--limit` to run the full dataset (currently 290 cases). The CLI now defaults to the complete set when no limit is provided, so add `--limit` only when you want a smaller smoke test.
 
 While a run is in progress, you can tail the live JSONL output to see progress or resume after an interruption:
 
@@ -106,15 +117,17 @@ python -m src.evalsys.cli grade --grader
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini"
 python -m src.evalsys.cli grade --grader "openai:gpt-5-mini,gemini:gemini-2.5-flash"
 ```
+Because the benchmark uses open-ended case responses instead of multiple-choice answers, grading is done by LLM evaluators. By default, the pipeline runs **GPT-5 Mini** and **Gemini 2.5 Flash** as two independent graders, then reports both grader-specific views and an averaged view.
+
 This creates per-model CSVs in `data/out/graded/` plus a full suite of reports:
 - `scores__<model>__<grader>.csv` for graded answers per model/grader pair
 - `empty_answers__<model>__<grader>.csv` for empty answers per model/grader pair (if any)
-- `report.html` (full interactive report), `report_compact.html` (shareable, question text + scores only), and `report_public.html` (question-free public version)
-- `report_data.json` containing all tables, per-question graded records, and high-agreement findings (no images)
+- `report.html` (full interactive report), `report_compact.html` (shareable, case text + scores only), and `report_public.html` (public HTML without case text)
+- `report_data.json` containing all tables, per-case graded records, and high-agreement findings (no images)
 - `report_rankings.csv` with flattened rankings per view/metric for spreadsheets
 - `data/out/reports/grading_stats_summary.md` – markdown snapshot of the metrics
 
-> **Progress tracking:** grading files update after each question. If grading is interrupted, rerun with `--resume` (default) and the CLI will skip QIDs already written to the CSVs.
+> **Progress tracking:** grading files update after each case. If grading is interrupted, rerun with `--resume` (default) and the CLI will skip QIDs already written to the CSVs.
 
 `--grader` accepts:
 
@@ -124,6 +137,14 @@ This creates per-model CSVs in `data/out/graded/` plus a full suite of reports:
 - Literal `all`: identical to the flag-only shorthand.
 
 ## Reporting
+
+Surg Bench produces several output formats for different audiences:
+
+- **`report.html`**: full report with per-case detail, answers, and grader rationale.
+- **`report_compact.html`**: lighter shareable report with case text and scores, but without model answers or images.
+- **`report_public.html`**: public-safe HTML report that keeps aggregate results while excluding case text and answers.
+- **`report_data.json` + `report_rankings.csv`**: structured exports for downstream analysis.
+- **`docs/` GitHub Pages site**: a lightweight public site built from aggregate results only.
 
 ### Generate Report from Existing CSV Files
 Rebuild the HTML report from existing graded CSV outputs without re-running models or grading:
@@ -152,15 +173,31 @@ This script:
 The generated report includes:
 - **Model Comparison**: Side-by-side performance metrics
 - **Score Distribution**: Histograms and statistical summaries  
-- **Question Analysis**: Per-question breakdowns with justifications
+- **Case Analysis**: Per-case breakdowns with justifications
 - **Empty Answer Tracking**: Models that failed to respond
 - **Interactive Charts**: Sortable tables and visual analytics
 
 Need to share the results with collaborators or an AI assistant? Use the automatically generated `data/out/graded/report_compact.html` or `data/out/graded/report_public.html` for lightweight HTML sharing, plus `data/out/graded/report_data.json` (all tables and graded records without images) and `data/out/graded/report_rankings.csv` (flattened rankings for spreadsheets).
 
+### Build the GitHub Pages Site
+
+To build the lightweight public site in `docs/`, generate the public payload and publish the `docs` directory with your preferred static hosting workflow:
+
+```bash
+python3 generate_public_site.py
+```
+
+This updates:
+
+- `docs/index.html` - public landing page
+- `docs/assets/public-benchmark-data.js` - aggregate data bundle used by the page
+- `docs/assets/app.js` / `docs/assets/site.css` - client-side presentation
+
+The GitHub Pages version keeps rankings, category breakdowns, rejection behavior, and response-time summaries while omitting copyrighted case text, reference answers, model answers, grading justifications, and source images.
+
 ### Report Options
 - `--scores`: Path to CSV file or directory containing `scores__*.csv` files
-- `--dataset`: Path to `dataset.jsonl` file (for question context)
+- `--dataset`: Path to `dataset.jsonl` file (for case context)
 - `--empty-answers`: Optional path to empty answers CSV or directory
 - `--out-html`: Output HTML file path (defaults to same directory as scores)
 
@@ -190,10 +227,10 @@ Notes:
 
 ## Quick Testing Example
 
-Test multiple models and generate a comparative report with just 5 questions:
+Test multiple models and generate a comparative report with just 5 cases:
 
 ```bash
-# Step 1: Extract Q&A from PDF (if not done already)
+# Step 1: Extract cases from PDF (if not done already)
 python -m src.evalsys.cli ingest --pdf data/surgical.pdf
 
 # Step 2: Run multiple models at once
@@ -418,14 +455,18 @@ python -m tests.test_prompt_packing
 
 ## Output Files
 
-- `data/out/dataset.jsonl` - Extracted Q&A items
+- `data/out/dataset.jsonl` - Extracted benchmark cases
 - `data/out/images/` - Extracted images from PDF
 - `data/out/runs/*.jsonl` - Raw model responses
 - `data/out/graded/scores__<model>__<grader>.csv` - Graded results per model/grader pair
 - `data/out/graded/empty_answers__<model>__<grader>.csv` - Empty answers per model/grader pair (if any)
-- `data/out/graded/report.html` - Full HTML report (includes question details)
-- `data/out/graded/report_compact.html` - Compact HTML report (question text + scores)
-- `data/out/graded/report_public.html` - Public HTML report (no question text)
+- `data/out/graded/report.html` - Full HTML report (includes per-case details)
+- `data/out/graded/report_compact.html` - Compact HTML report (case text + scores)
+- `data/out/graded/report_public.html` - Public HTML report (no case text)
+- `data/out/graded/report_data.json` - Structured report export for downstream analysis
+- `data/out/graded/report_rankings.csv` - Flat rankings export across views and metrics
+- `docs/index.html` - Public GitHub Pages site
+- `docs/assets/public-benchmark-data.js` - Public aggregate data payload for the site
 
 ## Architecture
 
@@ -433,8 +474,8 @@ The system has four main layers:
 
 1. **Ingest**: PDF extraction with image mapping using PyMuPDF
 2. **Runners**: Standardized prompting across multiple AI providers
-3. **Graders**: LLM-based grading with configurable rubrics
-4. **Analytics**: CSV and HTML reporting with scoring breakdowns
+3. **Graders**: LLM-based grading for open-ended responses using configurable rubrics
+4. **Analytics**: CSV, HTML, JSON, and public-site reporting with scoring breakdowns
 
 ## Advanced Usage
 
@@ -455,13 +496,6 @@ Process larger datasets:
 ```bash
 python -m src.evalsys.cli run --models "openai-reasoning:gpt-5" --limit 200
 ```
-
-## Security Notes
-
-- All API keys are stored in environment variables
-- No sensitive data is logged
-- Graders penalize harmful or unsafe advice
-- This system is for educational/benchmarking purposes only
 
 ## License
 
