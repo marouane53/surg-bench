@@ -19,6 +19,15 @@ We selected this textbook because it was **published in 2025**, before most curr
 
 In the current public release, the benchmark covers **290 cases** containing **1,249 numbered sub-prompts** across **14 surgical categories**.
 
+## Public Results
+
+See the live public benchmark here: [Surg Bench Public Results](https://marouane53.github.io/surg-bench/)
+
+- Current public release: **290 cases**, **1,249 numbered sub-prompts**, **14 surgical categories**
+- Best overall model on all-cases scoring: **Gemini 3 Flash** at **0.882**
+- Best fully reliable model with zero rejects: **GPT-5.2** at **0.867**
+- Fastest median answered-case response time: **Gemini 2.5 Flash Lite** at about **3.2s**
+
 ### Running the Benchmark
 
 **To run this evaluation, you must purchase the book.** The PDF (`data/surgical.pdf`) is not included in this repository. You can obtain the book from major medical publishers or academic bookstores. Once acquired, place the PDF in the `data/` directory to begin extraction and evaluation.
